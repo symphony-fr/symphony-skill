@@ -50,7 +50,7 @@ Onboarding sequence:
 2. Check delivery — ask for postal code, verify with `GET /delivery/check`; if not deliverable, stop
 3. Dietary needs — allergies, intolerances, diet identity (vegan, halal…), dislikes
 4. Appetite and goals — how much they eat, what they're optimizing for; set calorie target
-5. Logistics — microwave, freezer space, meals per week
+5. Logistics — freezer, heating method, meals per week (see **Storage & Logistics** section below for how to handle each answer)
 6. First recipes — browse a few matches, not the whole catalog
 
 One step at a time. Wait for the user's answer before moving on.
@@ -66,7 +66,7 @@ One step at a time. Wait for the user's answer before moving on.
 5. **Use pagination.** List endpoints return pages. Always check `pagination.has_next_page` and offer to load more.
 6. **Calories first, not grams.** Symphony sizes meals by calorie target. Do NOT pass `quantity_g` unless the user explicitly requests a specific gram amount. When omitted, the system auto-calculates the optimal portion: `grams = target_kcal / energy_density`, clamped to 280–650g. This ensures every meal hits the calorie target while staying in a comfortable eating range.
 7. **Ask about appetite before setting targets.** Understand how much the user typically eats before choosing a calorie target. A person used to small meals may struggle with a 600g portion even if it's nutritionally right; a person used to large meals may feel unsatisfied with 300g even if it has enough calories. See the Best Practices section below.
-8. **Nutrition is per 100g.** Scale by actual `quantity_g` when reporting absolute values to the user.
+8. **Nutrition is per 100g by default.** Scale by actual `quantity_g` when reporting absolute values to the user. When discovering recipes, use `target_energy` to get per-serving values and filter by per-serving amounts directly.
 9. **Rate by meal ID, not recipe ID.** The rate endpoint uses the BuyingItemLabel `id` from past baskets, not the recipe's ID. Rating a meal automatically marks it as eaten if it wasn't already.
 10. **Verify after PATCH /me.** After calling `PATCH /me`, always verify the update persisted by calling `GET /me`. Some fields may be silently dropped.
 11. **Share what you learn.** When you discover something useful (a substitution pattern, an edge case, a nutritional insight), post it to `POST /knowledge`. Check `GET /knowledge/synthesis` at the start of your session to benefit from what other agents have learned.
@@ -108,6 +108,31 @@ Above ~550g, check if the user is genuinely used to large meals. Below ~350g, re
 ### Reordering a previous meal
 
 To reorder a meal from a previous order: call `GET /me/baskets` to find it, take the `recipe_id` from the meal, and `POST` it to `/me/meals/upcoming-basket`. No special endpoint needed.
+
+### Storage & logistics
+
+**Freezer is mandatory.** Symphony meals are delivered frozen and must be stored in a freezer. There is no alternative — meals cannot be stored in a fridge. If the customer has no freezer at all, they cannot use Symphony unless they accept a loaner freezer (see below).
+
+**Meals must stay frozen until heating.** Never defrost in the fridge — many ingredients degrade when thawed slowly. Never leave meals in the delivery bag — it's a paper bag that gets wet and leaky as meals thaw. The rule: freezer → microwave or pan. Nothing in between.
+
+**Heating methods:**
+- **Microwave** (recommended): standard reheating, ~6 minutes
+- **Pan/stovetop** (valid alternative): medium heat with a small amount of added water, stir regularly to distribute heat evenly. Works well — advise this if the customer has no microwave
+- **Oven: not possible.** Symphony meals cannot be reheated in an oven
+
+**Freezer capacity tiers:**
+
+| Storage type | Capacity | Notes |
+|-------------|----------|-------|
+| Ice box (compartment inside fridge) | ~5–6 meals | Must be defrosted and emptied first (remove ice buildup and clear out existing contents). Enough for a small weekly order |
+| One freezer drawer | ~10–14 meals | Must be emptied. Comfortable for a standard weekly order |
+| 2+ drawers or standalone freezer | 14+ meals | No constraint |
+
+**Delivery frequency is weekly or biweekly only.** Symphony delivers once per week or once every two weeks. Never suggest multiple deliveries per week — this is not an option. If the customer's freezer capacity limits how many meals they can store, the answer is to order fewer meals per week (minimum 5 per delivery), not to receive more frequent deliveries.
+
+**Freezer lending program.** If the customer doesn't have enough freezer space for the number of meals they want, Symphony lends a small freezer for free. It's compact — roughly 1.5× the size of a microwave. It arrives with the first order at no cost. This resolves the storage constraint entirely — offer it whenever space is the blocker.
+
+**When discussing delivery after checking `GET /delivery/check`:** don't lead with shipping costs. Most regular orders (5+ meals) exceed the free shipping threshold, so shipping is typically free. Only mention shipping costs if the customer is specifically ordering a very small amount that would fall below the threshold.
 
 ### Per-week guidelines
 
@@ -224,7 +249,7 @@ Detailed knowledge on specific diets is available via `GET /knowledge/synthesis/
 
 Every recipe and ingredient includes `nutrition_per_100g` with these properties: `energy`, `water`, `fiber`, `protein`, `fat`, `saturated-fat`, `monounsaturated-fat`, `polyunsaturated-fat`, `availableCarb`, `sugar`, `salt`, `sodium`, `calcium`, `iron`, `magnesium`, `phosphorus`, `potassium`, `zinc`, `vitamin-A`, `vitamin-C`, `vitamin-D`, `vitamin-E`, `vitamin-K`, `thiamin`, `riboflavin`, `niacin`, `vitamin-B6`, `vitamin-B12`, `folate`, `cholesterol`, `omega-6`, `PUFA_18-2_n-6`, `PUFA_18-4_n-6`, `PUFA_20-4_n-6`, `PUFA_20-5_n-3`.
 
-All values are per 100g. Scale by `quantity_g / 100` for absolute amounts.
+All values are per 100g. Scale by `quantity_g / 100` for absolute amounts. When using `target_energy` on the discover endpoint, the response includes `nutrition_per_serving` already scaled to the computed portion.
 
 ---
 
@@ -298,6 +323,8 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "id": "6336dbba6ac970d8e808e862",
         "title": "Curry de pois chiches aux épinards",
         "nutrition_per_100g": { "energy": 123.34, "protein": 5.02, "fiber": 4.32, "..." : "35 properties" },
+        "portion_grams": 500,
+        "nutrition_per_serving": { "energy": 616.7, "protein": 25.1, "fiber": 21.6, "..." : "35 properties" },
         "image": "https://symphony.fr/cdn-cgi/imagedelivery/.../w=256,h=256"
       }
     ],
@@ -317,7 +344,8 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 | `tags` | string | Comma-separated tags (e.g. `vegetarian,high-protein`) |
 | `include_ingredients` | string | Comma-separated ingredient identifiers to require. Accepts both string IDs (e.g. `salmon`) and numeric `short_id` values (e.g. `85`). |
 | `exclude_ingredients` | string | Comma-separated ingredient identifiers to exclude. Accepts both string IDs (e.g. `pulled-pork`) and numeric `short_id` values (e.g. `125`). |
-| `nutrition_filter` | string | Filter by any nutrition property. Comma-separated `property:min:max` expressions. Supports all 35 properties (see All 35 Nutrition Properties). Empty min/max = unbounded. Examples: `protein:20:50` (protein 20–50g/100g), `sodium::0.3` (sodium ≤0.3g/100g), `availableCarb:0:15,protein:25:` (carbs 0–15 AND protein ≥25). Invalid property names return 400 with the full list. |
+| `nutrition_filter` | string | Filter by any nutrition property. Comma-separated `property:min:max` expressions. Supports all 35 properties (see All 35 Nutrition Properties). Empty min/max = unbounded (`null`/`none` also accepted). **When `target_energy` is set, filter values are per serving (not per 100g).** Examples without target_energy: `protein:20:50` (protein 20–50g/100g). Examples with `target_energy=700`: `protein:40:` (≥40g protein per 700kcal serving), `availableCarb::100,omega-6::8` (≤100g carbs AND ≤8g omega-6 per serving). Invalid property names return 400 with the full list. |
+| `target_energy` | int | Calorie target in kcal. Scales nutrition filters to per-serving values using Symphony's portion-sizing logic (energy density clamped 1.4–2.2 kcal/g, portion clamped 280–650g). Falls back to the authenticated user's `target_energy_kcal` profile value if omitted. When set, each recipe in the response includes `portion_grams` and `nutrition_per_serving`. |
 | `timescale` | int | For `most-popular`: 1, 7, 30, or 365 days |
 | `cursor` | string | Pagination cursor from previous response |
 | `lang` | string | `en` or `fr` |
