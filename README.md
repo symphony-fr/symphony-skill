@@ -16,6 +16,8 @@ openclaw skills install git:symphony-fr/symphony-skill
 
 **Any agent:** point it at `https://raw.githubusercontent.com/symphony-fr/symphony-skill/main/SKILL.md`
 
+Then just start chatting.
+
 ## Format
 
 SKILL.md follows the [Agent Skills](https://agentskills.io/) open standard — compatible with Claude Code, OpenClaw, Codex CLI, Cursor, Gemini CLI, and 20+ agents.
