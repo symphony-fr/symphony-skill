@@ -49,11 +49,13 @@ Onboarding sequence:
 1. Explain what Symphony is — personalized meals delivered to their home, ready to reheat
 2. Check delivery — ask for postal code, verify with `GET /delivery/check`; if not deliverable, stop
 3. Dietary needs — allergies, intolerances, diet identity (vegan, halal…), dislikes
-4. Appetite and goals — how much they eat, what they're optimizing for; set calorie target
+4. **Per-meal calorie target** — set it with the guided flow below (ask for a number first; if they don't know, estimate one from appetite). This is a quick conversation, **not a form to fill** — see **Setting the per-meal calorie target** in Best Practices
 5. Logistics — freezer, heating method, meals per week (see **Storage & Logistics** section below for how to handle each answer)
 6. First recipes — browse a few matches, not the whole catalog
 
 One step at a time. Wait for the user's answer before moving on.
+
+At the start of every session, also read `agent_context` (returned by `GET /me`) — it's your private running note about this user. Keep it updated with `PUT /me/context` whenever something changes (see **Remember context about me**).
 
 ---
 
@@ -65,11 +67,12 @@ One step at a time. Wait for the user's answer before moving on.
 4. **Check basket before adding.** Call `GET /me/meals/upcoming-basket` before adding meals to show what's already there.
 5. **Use pagination.** List endpoints return pages. Always check `pagination.has_next_page` and offer to load more.
 6. **Calories first, not grams.** Symphony sizes meals by calorie target. Do NOT pass `quantity_g` unless the user explicitly requests a specific gram amount. When omitted, the system auto-calculates the optimal portion: `grams = target_kcal / energy_density`, clamped to 280–650g. This ensures every meal hits the calorie target while staying in a comfortable eating range.
-7. **Ask about appetite before setting targets.** Understand how much the user typically eats before choosing a calorie target. A person used to small meals may struggle with a 600g portion even if it's nutritionally right; a person used to large meals may feel unsatisfied with 300g even if it has enough calories. See the Best Practices section below.
+7. **Set the calorie target per-meal, via the guided flow.** The target is **per-meal**, never per-day — daily totals are meaningless here because people snack around their Symphony meals. Ask for a number first; if the user doesn't know, estimate one from their appetite and any clues they give. Body measurements (age, height, weight, activity) do **not** auto-compute a target — there are no such fields. Record your estimate and the clues you used in `agent_context` (see **Remember context about me**) so future adjustments stay grounded. Full procedure: **Setting the per-meal calorie target** in Best Practices.
 8. **Nutrition is per 100g by default.** Scale by actual `quantity_g` when reporting absolute values to the user. When discovering recipes, use `target_energy` to get per-serving values and filter by per-serving amounts directly.
 9. **Rate by meal ID, not recipe ID.** The rate endpoint uses the BuyingItemLabel `id` from past baskets, not the recipe's ID. Rating a meal automatically marks it as eaten if it wasn't already.
-10. **Verify after PATCH /me.** After calling `PATCH /me`, always verify the update persisted by calling `GET /me`. Some fields may be silently dropped.
-11. **Share what you learn.** When you discover something useful (a substitution pattern, an edge case, a nutritional insight), post it to `POST /knowledge`. Check `GET /knowledge/synthesis` at the start of your session to benefit from what other agents have learned.
+10. **Verify after PATCH /me.** After calling `PATCH /me`, always verify the update persisted by calling `GET /me`. The only writable fields are `display_name`, `language`, and `target_energy_kcal` — anything else returns 400.
+11. **Keep a private running note about the user.** Read `agent_context` (in `GET /me`) at the start of each session, and update it with `PUT /me/context` whenever something changes — appetite estimate and the clues behind it, target refinements, lifestyle changes ("stopped going to the gym"), standing preferences. This is what keeps later adjustments grounded across sessions. See **Remember context about me**.
+12. **Share what you learn.** When you discover something useful (a substitution pattern, an edge case, a nutritional insight), post it to `POST /knowledge`. Check `GET /knowledge/synthesis` at the start of your session to benefit from what other agents have learned. (`/knowledge` is the *public* community feed — for *private* notes about one user, use `PUT /me/context` instead.)
 
 ---
 
@@ -89,15 +92,46 @@ If a user asks for a fixed gram amount instead, explain why calorie-fixed is pre
 - A small high-density meal (e.g. 300g at 2.5 kcal/g = 750 kcal) may be hard to finish and feel heavy
 - Calorie-fixed ensures consistent energy intake regardless of recipe density
 
-### Appetite guide
+### Setting the per-meal calorie target
 
-| Appetite | Typical calorie target | Typical portion range |
-|----------|----------------------|----------------------|
+The target is always **per-meal** (the amount of food in one Symphony dish), never a
+daily total — people snack around their meals, so a daily figure tells you nothing about
+portion size. There is **no formula and no body-measurement field** that sets the target
+automatically; it's a short guided conversation:
+
+1. **Ask for a number directly.** "Roughly how many calories do you want per meal?" If the
+   user gives a number, set it with `PATCH /me {"target_energy_kcal": N}` and move on —
+   skip the rest.
+2. **If they don't know, ask appetite** ("Do you eat light, normal, or a lot at a meal?")
+   and make a **first approximation** from the guide below. Use any clues they've already
+   given — sex, age, build, how active they are — to nudge within the range (e.g. a large
+   active man → top of "Large"; a petite, sedentary person → bottom of "Small"). These are
+   only clues for a starting estimate, nothing is stored as a structured field.
+3. **If appetite framing isn't landing, don't loop.** Some users genuinely can't say whether
+   they eat "light" or "a lot." Make it concrete instead — anchor on a real plate ("a normal
+   plate you'd cook at home" ≈ 700 kcal), or ask **one or two light clue questions** (rough
+   age, how active they are, general build) and translate those into a starting number
+   yourself. Keep it to a couple of quick questions, framed as "just to pick a starting
+   point": **never** collect a full body profile, ask for precise height/weight, or imply a
+   calculation, and never make any of it required. If they still won't engage, just start at
+   **~700 kcal (normal)** and let the first meal do the tuning.
+4. **Set it as a starting point and say so.** Tell the user it's a first estimate you'll
+   fine-tune.
+5. **Refine from the next meal.** After they've had their first meal, ask whether it was
+   too much or too little food and nudge `target_energy_kcal` up or down (~±50–100 kcal).
+   Record the outcome in `agent_context` so you don't re-litigate it next time.
+
+| Appetite | First-approximation per-meal target | Typical portion range |
+|----------|-------------------------------------|----------------------|
 | Small ("I eat light") | ~450 kcal | 280–350g |
 | Normal | ~700 kcal | 350–500g |
 | Large ("I eat a lot") | ~850–1000 kcal | 450–650g |
 
 Above ~550g, check if the user is genuinely used to large meals. Below ~350g, recipe precision decreases.
+
+Whatever you settle on — the estimate, the clues behind it, and any later refinement —
+write it into `agent_context` (see **Remember context about me**) so it survives across
+sessions and stays grounded if their life changes (e.g. they stop exercising).
 
 ### Per-meal nutritional guidelines
 
@@ -431,12 +465,13 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
     "email": "sophie@example.com",
     "language": "fr",
     "target_energy_kcal": 750,
-    "next_actions": ["update_profile", "view_upcoming_basket", "browse_recipes"]
+    "agent_context": "Eats ~750 kcal/meal. Vegetarian, dislikes mushrooms. Started cycling to work May 2026.",
+    "next_actions": ["update_profile", "update_context", "view_upcoming_basket", "browse_recipes"]
   }
 }
 ```
 
-Returns: `id`, `display_name`, `username`, `email`, `language`, `target_energy_kcal`.
+Returns: `id`, `display_name`, `username`, `email`, `language`, `target_energy_kcal` (per-meal), and `agent_context` (your private running note about this user — see **Remember context about me**). Symphony sizes meals per-meal; there is no daily target.
 
 ---
 
@@ -464,13 +499,54 @@ curl -s -X PATCH -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 |-------|------|------------|
 | `display_name` | string | Max 100 chars |
 | `language` | string | `en` or `fr` |
-| `target_energy_kcal` | float | 100–2000 |
-| `gender` | string | `MALE` or `FEMALE` |
-| `age` | int | 1–120 |
-| `height_cm` | float | 50–250 |
-| `weight_kg` | float | 20–300 |
-| `activity_level` | string | `NOT_VERY_ACTIVE`, `MODERATELY_ACTIVE`, `ACTIVE`, `HIGHLY_ACTIVE` |
+| `target_energy_kcal` | float | 100–2000 (per-meal) |
 
+Any other field returns **400**. `target_energy_kcal` is the only nutritional setting — it
+is **per-meal**. Body measurements (age, height, weight, activity level) are **not** stored
+and do not compute a target; gather appetite/clues in conversation instead (see **Setting
+the per-meal calorie target**). To save private notes about the user, use `PUT /me/context`,
+not `PATCH /me`.
+
+---
+
+### "Remember context about me" (private agent notes)
+
+`agent_context` is a free-form note **you** maintain about a single user — private to this
+user (unlike `/knowledge`, which is the public community feed). It persists across sessions,
+so it's how you stay grounded over time: what you settled on for their per-meal target and
+why, the appetite/clues behind that estimate, standing preferences, and life changes that
+should shift your advice ("stopped going to the gym in June 2026 — nudge target down").
+
+**Read it** (also returned inside `GET /me`, so you usually already have it):
+
+```bash
+curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/me/context"
+```
+
+```json
+{
+  "data": {
+    "context": "Eats ~700 kcal/meal (estimated from 'normal appetite', active 30yo). Vegetarian, hates mushrooms. Refined down from 750 after first meal felt too big.",
+    "updated_at": "2026-06-27T10:15:00.000Z",
+    "next_actions": ["update_context", "view_profile"]
+  }
+}
+```
+
+**Write it** — `PUT` replaces the whole note (you maintain the full text; read it, edit it,
+write it back). Send an empty string to clear it.
+
+```bash
+curl -s -X PUT -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  "https://symphony.fr/api/v3/me/context" \
+  -d '{"content": "Eats ~700 kcal/meal. Vegetarian, hates mushrooms. Stopped cycling to work — watch portions."}'
+```
+
+Body: `{ "content": "<free-form text>" }` (string, max 10000 chars). Keep it concise and
+current — prune stale notes when you rewrite. Update it whenever the target changes, you
+learn a durable preference, or the user's situation shifts.
 
 ---
 
@@ -1117,8 +1193,10 @@ Synthesis pages are public (no auth required) and updated periodically. Check `u
 | `/recipes/{id}` | GET | Yes | Recipe detail with ingredients and nutrition |
 | `/recipes` | POST | Yes | Create recipe from ingredient proportions |
 | `/recipes/{mealId}/rate` | POST | Yes | Rate a meal (1–5) with optional comment |
-| `/me` | GET | Yes | User profile |
-| `/me` | PATCH | Yes | Update profile fields |
+| `/me` | GET | Yes | User profile (incl. per-meal `target_energy_kcal` and `agent_context`) |
+| `/me` | PATCH | Yes | Update profile fields (`display_name`, `language`, `target_energy_kcal`) |
+| `/me/context` | GET | Yes | Read your private agent note about this user |
+| `/me/context` | PUT | Yes | Replace your private agent note about this user |
 | `/me/baskets` | GET | Yes | Past baskets with meals (paginated) |
 | `/me/meals/history` | GET | Yes | Meal history (paginated) |
 | `/me/meals/upcoming-basket` | GET | Yes | Current upcoming basket |
