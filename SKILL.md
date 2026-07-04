@@ -6,7 +6,10 @@ description: >-
   view meal history, check nutritional intake, manage playlists, rate meals, and track credits.
   BEFORE any order: call GET /delivery/check to verify the user's postal code is in the
   delivery zone. Do not proceed with basket actions if not deliverable.
-  Requires SYMPHONY_API_KEY from https://symphony.fr/en/my-account/account/api-keys
+  Requires SYMPHONY_API_KEY: send users with an account to https://symphony.fr/api-key to
+  copy their key; send users without an account to
+  https://symphony.fr/signup?urlToShowAfterAuth=/api-key (they land on the key page right
+  after signing up).
 version: 3.0.0
 metadata:
   openclaw:
@@ -25,6 +28,17 @@ metadata:
 **Base URL:** `https://symphony.fr/api/v3`
 **Auth:** `Authorization: Bearer $SYMPHONY_API_KEY` on every authenticated request (or `?api_key=$SYMPHONY_API_KEY`).
 **Language:** `?lang=en` or `?lang=fr` (default `fr`) on any endpoint.
+
+## Getting Your API Key
+
+Every authenticated request needs `SYMPHONY_API_KEY`. To get it, send the user to the right page — **never** ask them to dig through account settings menus:
+
+- **User already has a Symphony account** → give them this link and ask them to copy the key shown and paste it back to you:
+  `https://symphony.fr/api-key`
+- **User has no account yet** → give them this link; they sign up and land directly on the key page, where the key is created for them automatically:
+  `https://symphony.fr/signup?urlToShowAfterAuth=/api-key`
+
+The page shows the key as a single value with a copy button (header: "API KEY", subtitle: "PASTE THIS KEY INTO YOUR AI ASSISTANT"). Once the user pastes it back, store it as `SYMPHONY_API_KEY` and use it as `Authorization: Bearer $SYMPHONY_API_KEY`. These unprefixed links serve the site's default language (French); prefix the path with `/en` (e.g. `https://symphony.fr/en/api-key`) if the user prefers English.
 
 ## Response Format
 
@@ -45,12 +59,14 @@ All field names are `snake_case`. Most responses include a `next_actions` array 
 
 When this skill is activated with a new customer (no prior orders or profile not yet configured), **onboard them step by step before doing anything else.** Do not list capabilities or describe what the API can do.
 
+If you don't yet have the user's `SYMPHONY_API_KEY`, get it first (see **Getting Your API Key** above) — no authenticated call will work without it.
+
 Onboarding sequence:
 1. Explain what Symphony is — personalized meals delivered to their home, ready to reheat
 2. Check delivery — ask for postal code, verify with `GET /delivery/check`; if not deliverable, stop
 3. Dietary needs — allergies, intolerances, diet identity (vegan, halal…), dislikes
 4. **Per-meal calorie target** — set it with the guided flow below (ask for a number first; if they don't know, estimate one from appetite). This is a quick conversation, **not a form to fill** — see **Setting the per-meal calorie target** in Best Practices
-5. Logistics — freezer, heating method, meals per week (see **Storage & Logistics** section below for how to handle each answer)
+5. Logistics — microwave, freezer space, meals per week
 6. First recipes — browse a few matches, not the whole catalog
 
 One step at a time. Wait for the user's answer before moving on.
@@ -68,11 +84,12 @@ At the start of every session, also read `agent_context` (returned by `GET /me`)
 5. **Use pagination.** List endpoints return pages. Always check `pagination.has_next_page` and offer to load more.
 6. **Calories first, not grams.** Symphony sizes meals by calorie target. Do NOT pass `quantity_g` unless the user explicitly requests a specific gram amount. When omitted, the system auto-calculates the optimal portion: `grams = target_kcal / energy_density`, clamped to 280–650g. This ensures every meal hits the calorie target while staying in a comfortable eating range.
 7. **Set the calorie target per-meal, via the guided flow.** The target is **per-meal**, never per-day — daily totals are meaningless here because people snack around their Symphony meals. Ask for a number first; if the user doesn't know, estimate one from their appetite and any clues they give. Body measurements (age, height, weight, activity) do **not** auto-compute a target — there are no such fields. Record your estimate and the clues you used in `agent_context` (see **Remember context about me**) so future adjustments stay grounded. Full procedure: **Setting the per-meal calorie target** in Best Practices.
-8. **Nutrition is per 100g by default.** Scale by actual `quantity_g` when reporting absolute values to the user. When discovering recipes, use `target_energy` to get per-serving values and filter by per-serving amounts directly.
+8. **Nutrition is per 100g.** Scale by actual `quantity_g` when reporting absolute values to the user.
 9. **Rate by meal ID, not recipe ID.** The rate endpoint uses the BuyingItemLabel `id` from past baskets, not the recipe's ID. Rating a meal automatically marks it as eaten if it wasn't already.
 10. **Verify after PATCH /me.** After calling `PATCH /me`, always verify the update persisted by calling `GET /me`. The only writable fields are `display_name`, `language`, and `target_energy_kcal` — anything else returns 400.
 11. **Keep a private running note about the user.** Read `agent_context` (in `GET /me`) at the start of each session, and update it with `PUT /me/context` whenever something changes — appetite estimate and the clues behind it, target refinements, lifestyle changes ("stopped going to the gym"), standing preferences. This is what keeps later adjustments grounded across sessions. See **Remember context about me**.
 12. **Share what you learn.** When you discover something useful (a substitution pattern, an edge case, a nutritional insight), post it to `POST /knowledge`. Check `GET /knowledge/synthesis` at the start of your session to benefit from what other agents have learned. (`/knowledge` is the *public* community feed — for *private* notes about one user, use `PUT /me/context` instead.)
+13. **Never place an order without confirming price + details.** Placing an order (`POST /me/orders`) is a **two-call** flow: first call *without* `confirmed` to get the `order_summary` + full `pricing` breakdown, show the user everything (especially `amount_to_pay_eur`) and get an explicit "yes", then call again with `"confirmed": true`. Do this **every time**, even when the address, method, date, and card are all already saved. See **"Place my order" (Checkout)**.
 
 ---
 
@@ -283,7 +300,7 @@ Detailed knowledge on specific diets is available via `GET /knowledge/synthesis/
 
 Every recipe and ingredient includes `nutrition_per_100g` with these properties: `energy`, `water`, `fiber`, `protein`, `fat`, `saturated-fat`, `monounsaturated-fat`, `polyunsaturated-fat`, `availableCarb`, `sugar`, `salt`, `sodium`, `calcium`, `iron`, `magnesium`, `phosphorus`, `potassium`, `zinc`, `vitamin-A`, `vitamin-C`, `vitamin-D`, `vitamin-E`, `vitamin-K`, `thiamin`, `riboflavin`, `niacin`, `vitamin-B6`, `vitamin-B12`, `folate`, `cholesterol`, `omega-6`, `PUFA_18-2_n-6`, `PUFA_18-4_n-6`, `PUFA_20-4_n-6`, `PUFA_20-5_n-3`.
 
-All values are per 100g. Scale by `quantity_g / 100` for absolute amounts. When using `target_energy` on the discover endpoint, the response includes `nutrition_per_serving` already scaled to the computed portion.
+All values are per 100g. Scale by `quantity_g / 100` for absolute amounts.
 
 ---
 
@@ -338,6 +355,11 @@ curl -s "https://symphony.fr/api/v3/delivery/dates?postal_code=75011&weeks=2"
 
 Query params: `postal_code` (required), `method` (filter to one method), `weeks` (1–8, default 4).
 
+**Delivery zones** — the returned `delivery_methods` already reflect the user's location; just present what comes back and don't promise a method that isn't listed:
+- **Paris + inner suburbs** → `doorstep` and `courier` (Symphony's own fleet, next-day, weekday slots).
+- **Anywhere else in France** → `chronofresh` only (national cold-chain courier, ~2-day lead). If a customer outside Paris asks why they don't see doorstep/courier, this is why — it's not an error.
+- **Outside France / invalid postal code** → `deliverable: false`. Tell the user Symphony only delivers within France and stop (rule #1).
+
 ---
 
 ### "Find me something to eat"
@@ -357,8 +379,7 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "id": "6336dbba6ac970d8e808e862",
         "title": "Curry de pois chiches aux épinards",
         "nutrition_per_100g": { "energy": 123.34, "protein": 5.02, "fiber": 4.32, "..." : "35 properties" },
-        "portion_grams": 500,
-        "nutrition_per_serving": { "energy": 616.7, "protein": 25.1, "fiber": 21.6, "..." : "35 properties" },
+        "portion_grams": 567,
         "image": "https://symphony.fr/cdn-cgi/imagedelivery/.../w=256,h=256"
       }
     ],
@@ -368,18 +389,30 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 }
 ```
 
+**`portion_grams` — preview the auto-portion before adding.** When a calorie
+target is known, each recipe includes `portion_grams`: the gram portion that
+target produces for that recipe, computed with the *exact same* logic the basket
+uses on add (`grams = target_kcal / energy_density`, energy density clamped to
+1.4–2.2 kcal/g, grams clamped to 280–650 — see rule #6). So this is the portion
+the user will actually get if they add the recipe with no `quantity_g`. The
+target is taken from an explicit `target_energy` query param if given, otherwise
+the user's stored `target_energy_kcal`. If neither is set, the field is omitted.
+You don't need a separate per-serving nutrition block — derive it yourself:
+`nutrition_per_serving = nutrition_per_100g * portion_grams / 100`. Example: a
+recipe at 123.34 kcal/100g with `portion_grams: 567` ≈ 699 kcal for the serving.
+
 **Query params:**
 
 | Param | Type | Description |
 |-------|------|-------------|
 | `sort_by` | string | `most-popular` (default), `trending`, `recent` |
+| `target_energy` | number | Calorie target (kcal, 100–2000) used to compute `portion_grams` per recipe. Overrides the stored `target_energy_kcal` for this request; omit to use the profile target. |
 | `limit` | int | 1–50 (default 20) |
 | `search` | string | Free-text search |
 | `tags` | string | Comma-separated tags (e.g. `vegetarian,high-protein`) |
 | `include_ingredients` | string | Comma-separated ingredient identifiers to require. Accepts both string IDs (e.g. `salmon`) and numeric `short_id` values (e.g. `85`). |
 | `exclude_ingredients` | string | Comma-separated ingredient identifiers to exclude. Accepts both string IDs (e.g. `pulled-pork`) and numeric `short_id` values (e.g. `125`). |
-| `nutrition_filter` | string | Filter by any nutrition property. Comma-separated `property:min:max` expressions. Supports all 35 properties (see All 35 Nutrition Properties). Empty min/max = unbounded (`null`/`none` also accepted). **When `target_energy` is set, filter values are per serving (not per 100g).** Examples without target_energy: `protein:20:50` (protein 20–50g/100g). Examples with `target_energy=700`: `protein:40:` (≥40g protein per 700kcal serving), `availableCarb::100,omega-6::8` (≤100g carbs AND ≤8g omega-6 per serving). Invalid property names return 400 with the full list. |
-| `target_energy` | int | Calorie target in kcal. Scales nutrition filters to per-serving values using Symphony's portion-sizing logic (energy density clamped 1.4–2.2 kcal/g, portion clamped 280–650g). Falls back to the authenticated user's `target_energy_kcal` profile value if omitted. When set, each recipe in the response includes `portion_grams` and `nutrition_per_serving`. |
+| `nutrition_filter` | string | Filter by any nutrition property. Comma-separated `property:min:max` expressions. Supports all 35 properties (see All 35 Nutrition Properties). Empty min/max = unbounded. Examples: `protein:20:50` (protein 20–50g/100g), `sodium::0.3` (sodium ≤0.3g/100g), `availableCarb:0:15,protein:25:` (carbs 0–15 AND protein ≥25). Invalid property names return 400 with the full list. |
 | `timescale` | int | For `most-popular`: 1, 7, 30, or 365 days |
 | `cursor` | string | Pagination cursor from previous response |
 | `lang` | string | `en` or `fr` |
@@ -407,6 +440,14 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   }
 }
 ```
+
+**Show the user a recipe.** When the user wants to actually *see* a recipe (image, full breakdown) in their browser, give them the shareable page for its `id`:
+
+```
+https://symphony.fr/recipe/6336dbba6ac970d8e808e862
+```
+
+Use the recipe `id` straight from the API (`recipes[].id` in discover, or `id` in the detail response). It's a public link — no API key needed. The unprefixed URL serves French (site default); prefix the path with `/en` for English. Do **not** build `/r/...` links — that older route expects a serialized recipe string, not an id.
 
 ---
 
@@ -471,7 +512,7 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 }
 ```
 
-Returns: `id`, `display_name`, `username`, `email`, `language`, `target_energy_kcal` (per-meal), and `agent_context` (your private running note about this user — see **Remember context about me**). Symphony sizes meals per-meal; there is no daily target.
+Returns: `id`, `display_name`, `username`, `email`, `language`, `target_energy_kcal` (per-meal), and `agent_context` (your private running note about this user — see **Remember context about me**). There is no daily target and no body-measurement block; Symphony sizes meals per-meal.
 
 ---
 
@@ -506,6 +547,7 @@ is **per-meal**. Body measurements (age, height, weight, activity level) are **n
 and do not compute a target; gather appetite/clues in conversation instead (see **Setting
 the per-meal calorie target**). To save private notes about the user, use `PUT /me/context`,
 not `PATCH /me`.
+
 
 ---
 
@@ -572,7 +614,7 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
       }
     ],
     "count": 1,
-    "next_actions": ["add_meal", "remove_meal", "browse_recipes"]
+    "next_actions": ["add_meal", "remove_meal", "place_order", "browse_recipes"]
   }
 }
 ```
@@ -618,13 +660,231 @@ curl -s -X DELETE -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 
 Body: JSON array of meal IDs to remove.
 
+**Basket ready?** Once the user is happy with the basket, move on to placing the order — see **"Place my order" (Checkout)** just below.
+
+---
+
+### "Place my order" (Checkout)
+
+Once the basket has the meals the user wants, you can place a real order: pick a delivery address, a delivery method + date, and (if anything is due on card) a saved payment method, then `POST /me/orders`.
+
+**Before checkout, confirm:**
+1. The basket has at least one meal (`GET /me/meals/upcoming-basket`).
+2. Delivery is available for the address (`GET /delivery/check`) — rule #1.
+
+**Mandatory confirmation + price breakdown — always, even for saved values.** Placing an order is a **two-call** flow, and you must complete it **every time**, even when the address, method, date, and card are all already saved or defaulted:
+
+1. **Call `POST /me/orders` _without_ `confirmed`.** No order is placed. The response is `requires_confirmation: true` with the resolved `order_summary` and a full `pricing` breakdown (the exact numbers that will be charged).
+2. **Show the user everything** — all four details **and** the price breakdown — and get an explicit "yes":
+   - **Delivery address** (recipient + full street address)
+   - **Delivery method** (e.g. `doorstep`)
+   - **Preferred delivery date** (and time slot, if any)
+   - **Payment method** (which saved card — brand + last4 — or "covered by credits / free")
+   - **Pricing**: subtotal, shipping, discount(s), credits applied, and the **total to pay** — never skip the amount.
+3. **Only after they confirm, call `POST /me/orders` again with the same fields plus `"confirmed": true`.** This actually places the order.
+
+The endpoint **never places an order without `confirmed: true`** — the first call always returns the summary to confirm. Do not set `confirmed: true` unless the user has just confirmed these specific values and the price.
+
+**Payment — important agent constraint.** An agent can only pay with a card the user has **already saved** (the charge is confirmed off-session, server-side). You **cannot** enter a new card, and cards that demand 3-D Secure authentication can't be completed by an agent. So:
+- If the order total is fully covered by **credits** or is **0 €**, no payment method is needed — the order finalizes immediately.
+- If any amount is due on card, pass a `payment_method_id` from `GET /me/payment-methods`.
+  - **No saved card?** You can't add one for them. Have the user save a reusable card at `manage_payment_methods_url` (`…/my-account/account/payment`) — a standalone save that needs **no** order — then place the order yourself via the two-call flow. **Do not** send them to `/checkout` to "add a card" for *this* order — at `/checkout` a card is saved only by *completing* an order, so it either saves nothing (they didn't finish) or the order's already placed (they did). *(A completed browser order **does** persist the card — the "save card" option is on by default — so once the user has placed one order themselves, their **next** order can be agent-placed with that saved card.)*
+  - **3-D Secure required?** You can't complete it — have the user finish *that order* in the browser at `https://symphony.fr/checkout`.
+
+**When you can't finish it — send the user to checkout.** Anything an agent can't complete (3-D Secure authentication, entering a new card, or any other blocked payment step) should end with the user finishing in the browser at `https://symphony.fr/checkout`. The `Payment failed: …` errors already include this URL — relay it as-is.
+
+**Handing the user a link.** Some things are faster (or only possible) in the browser. The responses carry ready-made URLs for these — surface them to the user when relevant instead of inventing paths:
+- `https://symphony.fr/checkout` — where the user completes the **whole order** themselves when the agent can't (appears in payment-failure errors). Not a way to *just* add a card — but completing an order here **does** save the card for their future (agent-placeable) orders.
+- `manage_payment_methods_url` (on `GET /me/payment-methods` and in card-payment errors) — add or update a saved card. This is the **standalone way to save a reusable card (no order needed)** so you can then place the order.
+- `manage_addresses_url` (on `GET`/`POST /me/addresses`) — edit delivery addresses directly. **Always** offer this as an "or" whenever you ask the user for an address (see Step 1).
+- `basket_url` (on a placed order) — open the order's basket.
+
+#### Step 1 — Delivery address
+
+**Always offer the "or" option.** Any time you ask the user to enter a delivery address — to add a new one or change/manage an existing one — present **two** paths, not one:
+1. Tell it to you and you'll add it (`POST /me/addresses`), **or**
+2. Manage it themselves in the UI at `https://symphony.fr/my-account/account/address` (this is the `manage_addresses_url` returned by the address endpoints).
+
+Never prompt for an address without also giving the link. The address error responses include this URL too — relay it.
+
+List saved addresses:
+
+```bash
+curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/me/addresses"
+```
+
+```json
+{
+  "data": {
+    "addresses": [
+      {
+        "id": "64a1b2c3d4e5f6a7b8c9d0e1",
+        "first_name": "Sophie", "last_name": "Martin",
+        "street_address": "12 Rue de Rivoli", "address_line_2": "",
+        "city": "Paris", "state": "", "postal_code": "75004",
+        "country_code": "FR", "phone": "+33612345678",
+        "is_default_delivery": true, "is_default_billing": true
+      }
+    ],
+    "count": 1,
+    "default_delivery_address_id": "64a1b2c3d4e5f6a7b8c9d0e1",
+    "default_billing_address_id": "64a1b2c3d4e5f6a7b8c9d0e1",
+    "manage_addresses_url": "https://symphony.fr/my-account/account/address",
+    "next_actions": ["add_address", "place_order"]
+  }
+}
+```
+
+Add a new address (also becomes the default delivery address):
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  "https://symphony.fr/api/v3/me/addresses" \
+  -d '{
+    "first_name": "Sophie", "last_name": "Martin",
+    "street_address": "12 Rue de Rivoli", "city": "Paris",
+    "postal_code": "75004", "country_code": "FR", "phone": "+33612345678"
+  }'
+```
+
+Required: `first_name`, `last_name`, `street_address`, `city`, `postal_code`. Optional: `address_line_2`, `state`, `country_code` (default `FR`), `phone`, `only_billing` (set `true` to save a billing-only address that isn't checked for deliverability). A new delivery address must be in the delivery zone — the response echoes `deliverable` and the available `delivery_methods`.
+
+#### Step 2 — Delivery method + date
+
+The method comes from `GET /delivery/check` (`delivery_methods[].method`, e.g. `doorstep`, `courier`, `chronofresh`) and the date from `GET /delivery/dates` (a `YYYY-MM-DD` on an allowed day for that method).
+
+#### Step 3 — Saved payment method (only if card is due)
+
+```bash
+curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/me/payment-methods"
+```
+
+```json
+{
+  "data": {
+    "payment_methods": [
+      { "id": "pm_1AbC...", "brand": "visa", "last4": "4242", "exp_month": 12, "exp_year": 2027 }
+    ],
+    "count": 1,
+    "manage_payment_methods_url": "https://symphony.fr/my-account/account/payment",
+    "next_actions": ["place_order"]
+  }
+}
+```
+
+#### Step 4a — Get the order summary + price breakdown (no `confirmed`)
+
+Call `POST /me/orders` **without** `confirmed`. Nothing is placed — you get back the resolved details and the exact pricing to show the user:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  "https://symphony.fr/api/v3/me/orders" \
+  -d '{
+    "delivery_address_id": "64a1b2c3d4e5f6a7b8c9d0e1",
+    "delivery_method": "doorstep",
+    "delivery_date": "2026-06-29",
+    "payment_method_id": "pm_1AbC..."
+  }'
+```
+
+```json
+{
+  "data": {
+    "requires_confirmation": true,
+    "message": "Show the user this order summary AND the full pricing breakdown, get their explicit confirmation, then call POST /me/orders again with the same fields plus \"confirmed\": true. Do this every time, even when all values were already saved.",
+    "order_summary": {
+      "delivery_address": { "id": "64a1b2c3d4e5f6a7b8c9d0e1", "city": "Paris", "...": "..." },
+      "delivery_method": "doorstep",
+      "delivery_date": "2026-06-29",
+      "preferred_time": null,
+      "payment_method_id": "pm_1AbC...",
+      "payment_required": true
+    },
+    "pricing": {
+      "currency": "EUR",
+      "subtotal_eur": 32.49,
+      "shipping_eur": 10.0,
+      "shipping_is_free": false,
+      "discount_eur": 6.5,
+      "referral_discount_eur": 0,
+      "credits_applied_eur": 0,
+      "amount_to_pay_eur": 35.99,
+      "order_total_eur": 35.99,
+      "payment_required": true,
+      "free_shipping": { "threshold_eur": 32.0, "amount_left_eur": 6.01 },
+      "has_rounded_up_total": false,
+      "meal_count": 5
+    },
+    "next_actions": ["confirm_and_place_order"]
+  }
+}
+```
+
+Present all of `order_summary` **and** the `pricing` breakdown to the user (always include `amount_to_pay_eur`). `free_shipping`, when present, is the "add X more for free shipping" hint.
+
+#### Step 4b — Place the order (`confirmed: true`)
+
+Only after the user says yes, repeat the call with the same fields plus `"confirmed": true`:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  "https://symphony.fr/api/v3/me/orders" \
+  -d '{
+    "delivery_address_id": "64a1b2c3d4e5f6a7b8c9d0e1",
+    "delivery_method": "doorstep",
+    "delivery_date": "2026-06-29",
+    "payment_method_id": "pm_1AbC...",
+    "confirmed": true
+  }'
+```
+
+```json
+{
+  "data": {
+    "order": {
+      "id": "690f25d559ecd62698981999",
+      "status": "confirmed",
+      "total_eur": 45.9,
+      "currency": "EUR",
+      "delivery_method": "doorstep",
+      "estimated_delivery_at": "2026-06-29T06:00:00.000Z",
+      "delivery_address": { "id": "64a1b2c3d4e5f6a7b8c9d0e1", "city": "Paris", "...": "..." },
+      "basket_url": "https://symphony.fr/basket/690f25d559ecd62698981aaa"
+    },
+    "payment": { "method": "card", "charged_eur": 45.9 },
+    "next_actions": ["view_upcoming_basket", "view_past_orders"]
+  }
+}
+```
+
+**Body reference:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `confirmed` | to place | Omit (or `false`) to get the `requires_confirmation` summary + price breakdown without placing. Set `true` only after the user confirms those exact values and the price. |
+| `delivery_address_id` | one of address fields | Id from `GET /me/addresses`. Omit it and `delivery_address` to use the user's default. |
+| `delivery_address` | one of address fields | Inline address (same fields as `POST /me/addresses`) to create + use in one call. **Note:** does *not* set a billing default, so on a paid order it 400s "No billing address" unless the user already has a saved billing address. For a user with none, save the address first via `POST /me/addresses` (sets default delivery **and** billing), then order by `delivery_address_id` — or also pass `billing_address_id`. |
+| `delivery_method` | yes | Method key from `GET /delivery/check` (e.g. `doorstep`). Must be available for the address's postal code. |
+| `delivery_date` | yes | `YYYY-MM-DD` from `GET /delivery/dates`, on an allowed day for the method. |
+| `payment_method_id` | only if card due | Saved card id from `GET /me/payment-methods`. Not needed for credit/0 € orders. |
+| `billing_address_id` | no | Defaults to the user's **saved** billing address (set automatically when they add their first address via `POST /me/addresses`). An inline `delivery_address` does not populate it. |
+| `preferred_time` | no | Time slot, for methods that offer one (e.g. `courier`: `07:00-09:00`). |
+| `building_name`, `delivery_instructions` | no | Optional delivery details. |
+
+On a card decline or 3-D Secure requirement, the order is rolled back (the meals return to the basket) and the call returns a `Payment failed: …` error that already includes `https://symphony.fr/checkout` — relay it to the user so they can finish in the browser (the error also links `manage_payment_methods_url` for a declined card). On success, the response includes `order.basket_url` — share it so the user can review the placed order.
+
 ---
 
 ### "What did I order before?"
 
 Use `GET /me/baskets` (see "Show me my past orders" below) to see previous deliveries and their meals. This is the reliable record of what was ordered.
 
-**Note:** There is also a `GET /me/meals/history` endpoint, but it only shows meals the user explicitly marked as eaten — most users don't do this, so it will often be empty. Prefer `GET /me/baskets` for reviewing past meals.
+**Note:** There is also a `GET /me/meals/history` endpoint, but it only shows meals the user explicitly marked as eaten — most users don't do this, so it will often be empty. Prefer `GET /me/baskets` for reviewing past meals. To see what the user still has **left to eat** (received but not yet eaten), use `GET /me/meals/freezer`.
 
 ### "What did I eat recently?" (if user tracks eaten meals)
 
@@ -657,6 +917,40 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 Paginate with `?cursor=...` from response. Limit 1–50 (default 20).
 
 → **After showing history, suggest rating unrated meals.**
+
+---
+
+### "What's in my freezer? / What do I have left to eat?"
+
+The freezer is the user's current inventory of meals **received but not yet eaten** — the authoritative "what's left to eat" list.
+
+```bash
+curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/me/meals/freezer?lang=en"
+```
+
+```json
+{
+  "data": {
+    "meals": [
+      {
+        "id": "690f25d559ecd62698981904",
+        "title_fr": "Canard effiloché et son kaléidoscope de légumes",
+        "title_en": "Canard effiloché et son kaléidoscope de légumes",
+        "quantity_g": 540,
+        "meal_count": 1,
+        "nutrition_per_100g": { "energy": 124.96, "..." : "35 properties" },
+        "delivered_at": "2026-05-29T07:00:04.000Z",
+        "image": "https://symphony.fr/cdn-cgi/imagedelivery/..."
+      }
+    ],
+    "count": 1,
+    "next_actions": ["view_meal_history", "browse_recipes"]
+  }
+}
+```
+
+Returned in full (the freezer is a small bounded inventory) — no pagination. `count` is the number of meals currently in the freezer.
 
 ---
 
@@ -1101,6 +1395,35 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 
 Returns up to 50 most recent feedback items.
 
+**Amend a submission (if your report had an error or needs updating):**
+
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  "https://symphony.fr/api/v3/feedback/FEEDBACK_ID" \
+  -d '{ "message": "Corrected: tempeh, not tofu — already in the catalog, ignore." }'
+```
+
+Send only the fields you want to change — any of `message`, `type`, `context`,
+`callback`. Editing `callback` recomputes `response_for` exactly like a fresh
+submission (pass `"callback": null` to clear it). The response is the updated
+feedback, now carrying an `updated_at` timestamp. **Editing is only allowed
+while `status` is `pending`** — once Symphony has `answered` (or `closed`) it,
+the report is locked (the reply already refers to it), and a PATCH returns
+`409`; submit new feedback instead. Prefer amending an existing pending report
+over piling on duplicates.
+
+**Withdraw a submission:**
+
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/feedback/FEEDBACK_ID"
+```
+
+Removes the feedback from your list (any status). It stops showing up in
+`GET /feedback` and `GET /feedback?feedbackId=…` returns `404` afterwards.
+Deleting an already-deleted item also returns `404`.
+
 ---
 
 ### "Check my credits"
@@ -1199,10 +1522,15 @@ Synthesis pages are public (no auth required) and updated periodically. Check `u
 | `/me/context` | PUT | Yes | Replace your private agent note about this user |
 | `/me/baskets` | GET | Yes | Past baskets with meals (paginated) |
 | `/me/meals/history` | GET | Yes | Meal history (paginated) |
+| `/me/meals/freezer` | GET | Yes | Freezer — meals received but not yet eaten |
 | `/me/meals/upcoming-basket` | GET | Yes | Current upcoming basket |
 | `/me/meals/upcoming-basket` | POST | Yes | Add meals to basket |
 | `/me/meals/upcoming-basket` | PATCH | Yes | Update meal quantity/count |
 | `/me/meals/upcoming-basket` | DELETE | Yes | Remove meals from basket |
+| `/me/addresses` | GET | Yes | List saved delivery/billing addresses |
+| `/me/addresses` | POST | Yes | Add an address (sets default delivery) |
+| `/me/payment-methods` | GET | Yes | List saved cards for checkout |
+| `/me/orders` | POST | Yes | Place an order (checkout) from the basket |
 | `/me/playlists` | GET | Yes | List playlists |
 | `/me/playlists` | POST | Yes | Create playlist |
 | `/me/playlists/{id}` | GET | Yes | Playlist detail with items |
@@ -1212,6 +1540,8 @@ Synthesis pages are public (no auth required) and updated periodically. Check `u
 | `/me/nutrition/summary` | GET | Yes | Daily nutrition breakdown over date range |
 | `/feedback` | GET | Yes | List feedback / check response by `?feedbackId=ID` |
 | `/feedback` | POST | Yes | Submit feedback, bug report, ingredient request, or question |
+| `/feedback/{id}` | PATCH | Yes | Amend a pending feedback submission (locked once answered) |
+| `/feedback/{id}` | DELETE | Yes | Withdraw a feedback submission |
 | `/knowledge` | GET | Yes | List your own knowledge posts |
 | `/knowledge` | POST | Yes | Share a learning with the community |
 | `/knowledge/{id}` | DELETE | Yes | Remove a knowledge post |
