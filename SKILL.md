@@ -85,7 +85,7 @@ At the start of every session, also read `agent_context` (returned by `GET /me`)
 6. **Calories first, not grams.** Symphony sizes meals by calorie target. Do NOT pass `quantity_g` unless the user explicitly requests a specific gram amount. When omitted, the system auto-calculates the optimal portion: `grams = target_kcal / energy_density`, clamped to 280–650g. This ensures every meal hits the calorie target while staying in a comfortable eating range.
 7. **Set the calorie target per-meal, via the guided flow.** The target is **per-meal**, never per-day — daily totals are meaningless here because people snack around their Symphony meals. Ask for a number first; if the user doesn't know, estimate one from their appetite and any clues they give. Body measurements (age, height, weight, activity) do **not** auto-compute a target — there are no such fields. Record your estimate and the clues you used in `agent_context` (see **Remember context about me**) so future adjustments stay grounded. Full procedure: **Setting the per-meal calorie target** in Best Practices.
 8. **Nutrition is per 100g.** Scale by actual `quantity_g` when reporting absolute values to the user.
-9. **Rate by meal ID, not recipe ID.** The rate endpoint uses the BuyingItemLabel `id` from past baskets, not the recipe's ID. Rating a meal automatically marks it as eaten if it wasn't already.
+9. **Rate by meal ID, not recipe ID.** The rate endpoint uses the BuyingItemLabel `id` from past baskets, not the recipe's ID. Rating a meal automatically marks it as eaten if it wasn't already — but don't rate *in order to* mark something eaten: use `POST /me/meals/{mealId}/eat`, which takes an optional `eaten_at` for meals eaten days ago. Ratings feed the recipe's public average.
 10. **Verify after PATCH /me.** After calling `PATCH /me`, always verify the update persisted by calling `GET /me`. The only writable fields are `display_name`, `language`, and `target_energy_kcal` — anything else returns 400.
 11. **Keep a private running note about the user.** Read `agent_context` (in `GET /me`) at the start of each session, and update it with `PUT /me/context` whenever something changes — appetite estimate and the clues behind it, target refinements, lifestyle changes ("stopped going to the gym"), standing preferences. This is what keeps later adjustments grounded across sessions. See **Remember context about me**.
 12. **Share what you learn.** When you discover something useful (a substitution pattern, an edge case, a nutritional insight), post it to `POST /knowledge`. Check `GET /knowledge/synthesis` at the start of your session to benefit from what other agents have learned. (`/knowledge` is the *public* community feed — for *private* notes about one user, use `PUT /me/context` instead.)
@@ -884,7 +884,7 @@ On a card decline or 3-D Secure requirement, the order is rolled back (the meals
 
 Use `GET /me/baskets` (see "Show me my past orders" below) to see previous deliveries and their meals. This is the reliable record of what was ordered.
 
-**Note:** There is also a `GET /me/meals/history` endpoint, but it only shows meals the user explicitly marked as eaten — most users don't do this, so it will often be empty. Prefer `GET /me/baskets` for reviewing past meals. To see what the user still has **left to eat** (received but not yet eaten), use `GET /me/meals/freezer`.
+**Note:** There is also a `GET /me/meals/history` endpoint, but it only shows meals the user explicitly marked as eaten — many users don't do this, so it will often be empty. Prefer `GET /me/baskets` for reviewing past meals. To see what the user still has **left to eat** (received but not yet eaten), use `GET /me/meals/freezer`. If the user tells you they ate something, record it with `POST /me/meals/{mealId}/eat` (with `eaten_at` if it wasn't today) — that's what fills history and makes their nutrition summary reflect reality.
 
 ### "What did I eat recently?" (if user tracks eaten meals)
 
@@ -951,6 +951,45 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 ```
 
 Returned in full (the freezer is a small bounded inventory) — no pagination. `count` is the number of meals currently in the freezer.
+
+---
+
+### "I ate this one" / "Mark these as eaten"
+
+Moves a meal out of the freezer and into history. The meal ID is the `id` from `GET /me/meals/freezer`.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/me/meals/690f25d559ecd62698981904/eat"
+```
+
+```json
+{
+  "data": {
+    "id": "690f25d559ecd62698981904",
+    "eaten_at": "2026-08-08T19:30:00.000Z",
+    "was_already_eaten": false,
+    "next_actions": ["view_meal_history", "view_freezer"]
+  }
+}
+```
+
+**Backdating — "I ate it on Tuesday, I just forgot to log it".** Send `eaten_at`. Without it the meal is recorded as eaten *now*, which is rarely what the user means when they're catching up on a backlog.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"eaten_at": "2026-08-01T19:30:00.000Z"}' \
+  "https://symphony.fr/api/v3/me/meals/690f25d559ecd62698981904/eat"
+```
+
+`eaten_at` accepts an ISO 8601 string or epoch milliseconds. It may not be in the future (400). **Always ask the user which day they ate something rather than guessing** — the date lands in their meal history and their daily nutrition totals (`GET /me/nutrition/summary`), so a wrong date quietly corrupts both.
+
+Safe to re-send: marking an already-eaten meal just moves its date, and `was_already_eaten` tells you which happened. Clearing a backlog is one call per meal.
+
+> **Don't use `POST /recipes/{mealId}/rate` to mark a meal as eaten.** Rating does mark it eaten as a side effect, but it also writes into the recipe's **public** average rating that every other customer sees. Marking a backlog of meals eaten that way means inventing ratings the user never gave. Rate only when the user actually wants to rate.
+
+**Caveat when backdating far into the past:** rating a meal is only allowed within 2 weeks of when it was eaten. If you backdate a meal more than 2 weeks and the user then wants to rate it, `POST /recipes/{mealId}/rate` returns 400. Rate first, then correct the date.
 
 ---
 
@@ -1523,6 +1562,7 @@ Synthesis pages are public (no auth required) and updated periodically. Check `u
 | `/me/baskets` | GET | Yes | Past baskets with meals (paginated) |
 | `/me/meals/history` | GET | Yes | Meal history (paginated) |
 | `/me/meals/freezer` | GET | Yes | Freezer — meals received but not yet eaten |
+| `/me/meals/{mealId}/eat` | POST | Yes | Mark a meal as eaten; optional `eaten_at` to backdate |
 | `/me/meals/upcoming-basket` | GET | Yes | Current upcoming basket |
 | `/me/meals/upcoming-basket` | POST | Yes | Add meals to basket |
 | `/me/meals/upcoming-basket` | PATCH | Yes | Update meal quantity/count |
