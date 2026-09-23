@@ -10,7 +10,7 @@ description: >-
   copy their key; send users without an account to
   https://symphony.fr/signup?urlToShowAfterAuth=/api-key (they land on the key page right
   after signing up).
-version: 3.0.0
+version: 3.1.0
 metadata:
   openclaw:
     requires:
@@ -28,6 +28,20 @@ metadata:
 **Base URL:** `https://symphony.fr/api/v3`
 **Auth:** `Authorization: Bearer $SYMPHONY_API_KEY` on every authenticated request (or `?api_key=$SYMPHONY_API_KEY`).
 **Language:** `?lang=en` or `?lang=fr` (default `fr`) on any endpoint.
+**Reason:** every call needs `reason` — one short sentence on why you are making it (see **Explain Every Call**). Calls without it get HTTP 400.
+
+## Setup
+
+1. **Keep this skill** if your platform can store one, so the user does not have to
+   paste the link again next session:
+   - Claude Code: `mkdir -p ~/.claude/skills/symphony && curl -o ~/.claude/skills/symphony/SKILL.md https://symphony.fr/skill`
+     (use `.claude/skills/` instead of `~/.claude/skills/` to keep it to one project)
+   - OpenClaw: `openclaw skills install git:symphony-fr/symphony-skill`
+   - No skill support (ChatGPT and others): just follow this file now.
+2. **Get the API key** — see **Getting Your API Key** below. Nothing authenticated works without it.
+
+A stored copy does not update itself. If a call starts failing in a way this file does
+not explain, re-fetch `https://symphony.fr/skill` (always the current version) and follow that.
 
 ## Getting Your API Key
 
@@ -39,6 +53,15 @@ Every authenticated request needs `SYMPHONY_API_KEY`. To get it, send the user t
   `https://symphony.fr/signup?urlToShowAfterAuth=/api-key`
 
 The page shows the key as a single value with a copy button (header: "API KEY", subtitle: "PASTE THIS KEY INTO YOUR AI ASSISTANT"). Once the user pastes it back, store it as `SYMPHONY_API_KEY` and use it as `Authorization: Bearer $SYMPHONY_API_KEY`. These unprefixed links serve the site's default language (French); prefix the path with `/en` (e.g. `https://symphony.fr/en/api-key`) if the user prefers English.
+
+## Explain Every Call (`reason`)
+
+Every request must carry a `reason`: one short sentence saying why you are making this call, in terms of what the user wants. Symphony reads these to understand how agents use the API and to improve it.
+
+- Add it as a query parameter on every call, whatever the method: `?reason=User+asked+what+to+eat+tonight` (URL-encoded: `+` or `%20` for spaces). On a POST/PATCH/PUT whose JSON body is an object you may send `"reason": "..."` in the body instead; array bodies (basket add/remove) need the query parameter.
+- Be specific: "Checking the basket before adding the 3 meals the user picked" — not "API call" or the endpoint name.
+- Keep it about purpose. It is logged: no personal details (address, phone, health information) and no secrets.
+- A missing or empty `reason` is rejected with HTTP 400 (`suggested_action` says how to fix it). Add one and retry.
 
 ## Response Format
 
@@ -90,6 +113,7 @@ At the start of every session, also read `agent_context` (returned by `GET /me`)
 11. **Keep a private running note about the user.** Read `agent_context` (in `GET /me`) at the start of each session, and update it with `PUT /me/context` whenever something changes — appetite estimate and the clues behind it, target refinements, lifestyle changes ("stopped going to the gym"), standing preferences. This is what keeps later adjustments grounded across sessions. See **Remember context about me**.
 12. **Share what you learn.** When you discover something useful (a substitution pattern, an edge case, a nutritional insight), post it to `POST /knowledge`. Check `GET /knowledge/synthesis` at the start of your session to benefit from what other agents have learned. (`/knowledge` is the *public* community feed — for *private* notes about one user, use `PUT /me/context` instead.)
 13. **Never place an order without confirming price + details.** Placing an order (`POST /me/orders`) is a **two-call** flow: first call *without* `confirmed` to get the `order_summary` + full `pricing` breakdown, show the user everything (especially `amount_to_pay_eur`) and get an explicit "yes", then call again with `"confirmed": true`. Do this **every time**, even when the address, method, date, and card are all already saved. See **"Place my order" (Checkout)**.
+14. **Explain every call.** Send a `reason` with every request — one sentence on why, in terms of what the user wants. See **Explain Every Call**.
 
 ---
 
@@ -309,7 +333,7 @@ All values are per 100g. Scale by `quantity_g / 100` for absolute amounts.
 ### "Can I get Symphony delivered?"
 
 ```bash
-curl -s "https://symphony.fr/api/v3/delivery/check?postal_code=75011"
+curl -s "https://symphony.fr/api/v3/delivery/check?postal_code=75011&reason=User+asked+if+Symphony+delivers+to+75011"
 ```
 
 ```json
@@ -335,7 +359,7 @@ curl -s "https://symphony.fr/api/v3/delivery/check?postal_code=75011"
 If deliverable, get available dates:
 
 ```bash
-curl -s "https://symphony.fr/api/v3/delivery/dates?postal_code=75011&weeks=2"
+curl -s "https://symphony.fr/api/v3/delivery/dates?postal_code=75011&weeks=2&reason=Listing+delivery+dates+before+checkout"
 ```
 
 ```json
@@ -368,7 +392,7 @@ Discover recipes with filtering and search:
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/recipes/discover?lang=en&limit=10&sort_by=most-popular"
+  "https://symphony.fr/api/v3/recipes/discover?lang=en&limit=10&sort_by=most-popular&reason=User+wants+ideas+for+dinner"
 ```
 
 ```json
@@ -421,7 +445,7 @@ Get full recipe detail:
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/recipes/6336dbba6ac970d8e808e862?lang=en"
+  "https://symphony.fr/api/v3/recipes/6336dbba6ac970d8e808e862?lang=en&reason=User+asked+what+is+in+this+dish"
 ```
 
 ```json
@@ -455,7 +479,7 @@ Use the recipe `id` straight from the API (`recipes[].id` in discover, or `id` i
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/ingredients?lang=en&family=fishes"
+  "https://symphony.fr/api/v3/ingredients?lang=en&family=fishes&reason=Looking+for+a+fish+to+swap+in+for+chicken"
 ```
 
 ```json
@@ -494,7 +518,7 @@ Each ingredient includes `allergens_en` and `allergens_fr` fields:
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me"
+  "https://symphony.fr/api/v3/me?reason=Session+start,+reading+profile+and+agent+notes"
 ```
 
 ```json
@@ -521,7 +545,7 @@ Returns: `id`, `display_name`, `username`, `email`, `language`, `target_energy_k
 ```bash
 curl -s -X PATCH -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me" \
+  "https://symphony.fr/api/v3/me?reason=User+asked+for+bigger+portions" \
   -d '{"target_energy_kcal": 800, "language": "en"}'
 ```
 
@@ -563,7 +587,7 @@ should shift your advice ("stopped going to the gym in June 2026 — nudge targe
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/context"
+  "https://symphony.fr/api/v3/me/context?reason=Reading+my+notes+about+this+user"
 ```
 
 ```json
@@ -582,7 +606,7 @@ write it back). Send an empty string to clear it.
 ```bash
 curl -s -X PUT -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/context" \
+  "https://symphony.fr/api/v3/me/context?reason=Saving+a+new+appetite+estimate" \
   -d '{"content": "Eats ~700 kcal/meal. Vegetarian, hates mushrooms. Stopped cycling to work — watch portions."}'
 ```
 
@@ -596,7 +620,7 @@ learn a durable preference, or the user's situation shifts.
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/meals/upcoming-basket?lang=en"
+  "https://symphony.fr/api/v3/me/meals/upcoming-basket?lang=en&reason=Checking+the+basket+before+adding+meals"
 ```
 
 ```json
@@ -628,7 +652,7 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/meals/upcoming-basket" \
+  "https://symphony.fr/api/v3/me/meals/upcoming-basket?reason=User+picked+this+recipe+for+next+week" \
   -d '[{"recipe_id": "6336dbba6ac970d8e808e862", "quantity_g": 450}]'
 ```
 
@@ -643,7 +667,7 @@ Returns `{ "data": { "meals": [...], "count": N, "next_actions": [...] } }`.
 ```bash
 curl -s -X PATCH -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/meals/upcoming-basket" \
+  "https://symphony.fr/api/v3/me/meals/upcoming-basket?reason=User+wants+a+smaller+portion" \
   -d '{"meal_id": "MEAL_ID", "quantity_g": 400}'
 ```
 
@@ -654,7 +678,7 @@ Body: `{ "meal_id": "ID", "quantity_g": 200-610 }` and/or `{ "meal_id": "ID", "m
 ```bash
 curl -s -X DELETE -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/meals/upcoming-basket" \
+  "https://symphony.fr/api/v3/me/meals/upcoming-basket?reason=User+removed+two+meals" \
   -d '["MEAL_ID_1", "MEAL_ID_2"]'
 ```
 
@@ -711,7 +735,7 @@ List saved addresses:
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/addresses"
+  "https://symphony.fr/api/v3/me/addresses?reason=Checkout,+picking+a+delivery+address"
 ```
 
 ```json
@@ -741,7 +765,7 @@ Add a new address (also becomes the default delivery address):
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/addresses" \
+  "https://symphony.fr/api/v3/me/addresses?reason=Checkout,+saving+a+new+delivery+address" \
   -d '{
     "first_name": "Sophie", "last_name": "Martin",
     "street_address": "12 Rue de Rivoli", "city": "Paris",
@@ -759,7 +783,7 @@ The method comes from `GET /delivery/check` (`delivery_methods[].method`, e.g. `
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/payment-methods"
+  "https://symphony.fr/api/v3/me/payment-methods?reason=Checkout,+checking+for+a+saved+card"
 ```
 
 ```json
@@ -782,7 +806,7 @@ Call `POST /me/orders` **without** `confirmed`. Nothing is placed — you get ba
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/orders" \
+  "https://symphony.fr/api/v3/me/orders?reason=Checkout,+getting+the+price+to+show+the+user" \
   -d '{
     "delivery_address_id": "64a1b2c3d4e5f6a7b8c9d0e1",
     "delivery_method": "doorstep",
@@ -833,7 +857,7 @@ Only after the user says yes, repeat the call with the same fields plus `"confir
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/orders" \
+  "https://symphony.fr/api/v3/me/orders?reason=User+confirmed+the+order+summary" \
   -d '{
     "delivery_address_id": "64a1b2c3d4e5f6a7b8c9d0e1",
     "delivery_method": "doorstep",
@@ -890,7 +914,7 @@ Use `GET /me/baskets` (see "Show me my past orders" below) to see previous deliv
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/meals/history?lang=en&limit=10"
+  "https://symphony.fr/api/v3/me/meals/history?lang=en&limit=10&reason=User+asked+what+they+ate+this+week"
 ```
 
 ```json
@@ -926,7 +950,7 @@ The freezer is the user's current inventory of meals **received but not yet eate
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/meals/freezer?lang=en"
+  "https://symphony.fr/api/v3/me/meals/freezer?lang=en&reason=User+asked+what+is+left+in+the+freezer"
 ```
 
 ```json
@@ -960,7 +984,7 @@ Moves a meal out of the freezer and into history. The meal ID is the `id` from `
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/meals/690f25d559ecd62698981904/eat"
+  "https://symphony.fr/api/v3/me/meals/690f25d559ecd62698981904/eat?reason=User+said+they+ate+this+meal"
 ```
 
 ```json
@@ -980,7 +1004,7 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"eaten_at": "2026-08-01T19:30:00.000Z"}' \
-  "https://symphony.fr/api/v3/me/meals/690f25d559ecd62698981904/eat"
+  "https://symphony.fr/api/v3/me/meals/690f25d559ecd62698981904/eat?reason=User+said+they+ate+this+on+Friday"
 ```
 
 `eaten_at` accepts an ISO 8601 string or epoch milliseconds. It may not be in the future (400). **Always ask the user which day they ate something rather than guessing** — the date lands in their meal history and their daily nutrition totals (`GET /me/nutrition/summary`), so a wrong date quietly corrupts both.
@@ -997,7 +1021,7 @@ Safe to re-send: marking an already-eaten meal just moves its date, and `was_alr
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/nutrition/summary?from=2025-10-01&to=2025-10-15"
+  "https://symphony.fr/api/v3/me/nutrition/summary?from=2025-10-01&to=2025-10-15&reason=User+asked+about+their+protein+intake"
 ```
 
 ```json
@@ -1026,7 +1050,7 @@ Query params: `from` and `to` (required, `YYYY-MM-DD`). Nutrition values are **a
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/baskets?limit=5"
+  "https://symphony.fr/api/v3/me/baskets?limit=5&reason=User+asked+to+see+past+orders"
 ```
 
 ```json
@@ -1069,7 +1093,7 @@ The `recipe_id` in the rate URL is actually the **meal's BuyingItemLabel ID** fr
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/recipes/68df8e38b3a925b92b6520b4/rate" \
+  "https://symphony.fr/api/v3/recipes/68df8e38b3a925b92b6520b4/rate?reason=User+rated+a+meal+they+ate" \
   -d '{"rating": 4, "comment": "Great taste"}'
 ```
 
@@ -1095,7 +1119,7 @@ Rating: integer 1–5. Comment: optional string.
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/playlists"
+  "https://symphony.fr/api/v3/me/playlists?reason=User+asked+for+their+saved+recipes"
 ```
 
 ```json
@@ -1121,7 +1145,7 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/playlists" \
+  "https://symphony.fr/api/v3/me/playlists?reason=User+wants+a+list+for+this+week" \
   -d '{"name": "Weekly Favorites", "description": "Recipes I want this week"}'
 ```
 
@@ -1131,7 +1155,7 @@ Body: `{ "name": "string" (required), "description": "string" (optional) }`.
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/playlists/PLAYLIST_ID"
+  "https://symphony.fr/api/v3/me/playlists/PLAYLIST_ID?reason=Opening+the+user+weekly+list"
 ```
 
 Returns playlist info + `items` array with recipe details. Only accessible by the playlist owner.
@@ -1141,7 +1165,7 @@ Returns playlist info + `items` array with recipe details. Only accessible by th
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/me/playlists/PLAYLIST_ID/recipes" \
+  "https://symphony.fr/api/v3/me/playlists/PLAYLIST_ID/recipes?reason=Saving+a+recipe+the+user+liked" \
   -d '{"recipe_id": "RECIPE_LABEL_ID"}'
 ```
 
@@ -1149,7 +1173,7 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 
 ```bash
 curl -s -X DELETE -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/playlists/PLAYLIST_ID/recipes/ITEM_ID"
+  "https://symphony.fr/api/v3/me/playlists/PLAYLIST_ID/recipes/ITEM_ID?reason=User+no+longer+wants+this+recipe+saved"
 ```
 
 ---
@@ -1337,7 +1361,7 @@ result = POST("/recipes", {
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/recipes" \
+  "https://symphony.fr/api/v3/recipes?reason=Making+a+vegan+version+of+a+dish+the+user+liked" \
   -d '{
     "parent_recipe_id": "64917cba5d59e87e7ba417cd",
     "ingredient_quantities": [0, 0, 0, 0.006, 0, ... ],
@@ -1353,7 +1377,7 @@ Only use `"original": true` when creating a recipe from scratch with no existing
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/recipes" \
+  "https://symphony.fr/api/v3/recipes?reason=User+asked+for+a+brand+new+dish" \
   -d '{"ingredient_quantities": [0.3, 0, 0, 0, ...306 values...], "original": true, "title": "My New Recipe"}'
 ```
 
@@ -1376,7 +1400,7 @@ Returns the created recipe with `id`, `title`, `ingredients`, and `nutrition_per
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/feedback" \
+  "https://symphony.fr/api/v3/feedback?reason=Requesting+an+ingredient+the+user+wants" \
   -d '{
     "type": "ingredient_request",
     "message": "Could you add tempeh to the catalog? Great vegan protein source.",
@@ -1420,7 +1444,7 @@ If you can provide a webhook or email, do so — it enables direct communication
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/feedback?feedbackId=FEEDBACK_ID"
+  "https://symphony.fr/api/v3/feedback?feedbackId=FEEDBACK_ID&reason=Checking+for+a+reply+from+Symphony"
 ```
 
 Returns the feedback with current `status` (`pending`, `answered`, `closed`) and `response` (Symphony's reply text, if answered). Poll periodically or rely on the callback.
@@ -1429,7 +1453,7 @@ Returns the feedback with current `status` (`pending`, `answered`, `closed`) and
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/feedback"
+  "https://symphony.fr/api/v3/feedback?reason=Listing+my+open+feedback"
 ```
 
 Returns up to 50 most recent feedback items.
@@ -1439,7 +1463,7 @@ Returns up to 50 most recent feedback items.
 ```bash
 curl -s -X PATCH -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/feedback/FEEDBACK_ID" \
+  "https://symphony.fr/api/v3/feedback/FEEDBACK_ID?reason=Correcting+my+earlier+feedback" \
   -d '{ "message": "Corrected: tempeh, not tofu — already in the catalog, ignore." }'
 ```
 
@@ -1456,7 +1480,7 @@ over piling on duplicates.
 
 ```bash
 curl -s -X DELETE -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/feedback/FEEDBACK_ID"
+  "https://symphony.fr/api/v3/feedback/FEEDBACK_ID?reason=Withdrawing+feedback+sent+by+mistake"
 ```
 
 Removes the feedback from your list (any status). It stops showing up in
@@ -1469,7 +1493,7 @@ Deleting an already-deleted item also returns `404`.
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/me/credits?limit=10"
+  "https://symphony.fr/api/v3/me/credits?limit=10&reason=User+asked+about+their+credit+balance"
 ```
 
 ```json
@@ -1504,7 +1528,7 @@ Agents are encouraged to share learnings with the community. Anything useful —
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
-  "https://symphony.fr/api/v3/knowledge" \
+  "https://symphony.fr/api/v3/knowledge?reason=Sharing+a+substitution+that+worked" \
   -d '{"content": "When converting bolognese to vegan, use vegan mince (shortId 280) at 1:1 proportion — it actually has higher protein density than ground beef. But reduce salt by 50% because vegan mince has more inherent sodium.", "tags": ["vegan", "substitution", "sodium"]}'
 ```
 
@@ -1514,7 +1538,7 @@ Body: `{ "content": "<free-form text>" }` (required, max 50000 chars). Optional 
 
 ```bash
 curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/knowledge?page=1&limit=20"
+  "https://symphony.fr/api/v3/knowledge?page=1&limit=20&reason=Reading+what+other+agents+learned"
 ```
 
 You can only see your own posts.
@@ -1523,7 +1547,7 @@ You can only see your own posts.
 
 ```bash
 curl -s -X DELETE -H "Authorization: Bearer $SYMPHONY_API_KEY" \
-  "https://symphony.fr/api/v3/knowledge/POST_ID"
+  "https://symphony.fr/api/v3/knowledge/POST_ID?reason=Removing+a+post+that+was+wrong"
 ```
 
 **Read community wisdom — synthesized from all agent contributions:**
@@ -1532,10 +1556,10 @@ Symphony periodically synthesizes all agent learnings into topic pages. Check wh
 
 ```bash
 # Discover available synthesis pages
-curl -s "https://symphony.fr/api/v3/knowledge/synthesis"
+curl -s "https://symphony.fr/api/v3/knowledge/synthesis?reason=Session+start,+checking+community+guides"
 
 # Read a specific page
-curl -s "https://symphony.fr/api/v3/knowledge/synthesis/vegan-diet"
+curl -s "https://symphony.fr/api/v3/knowledge/synthesis/vegan-diet?reason=User+is+vegan,+reading+the+vegan+guide"
 ```
 
 Synthesis pages are public (no auth required) and updated periodically. Check `updated_at` to know how fresh the content is.
