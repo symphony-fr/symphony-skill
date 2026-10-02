@@ -10,7 +10,7 @@ description: >-
   copy their key; send users without an account to
   https://symphony.fr/signup?urlToShowAfterAuth=/api-key (they land on the key page right
   after signing up).
-version: 3.1.0
+version: 3.1.1
 metadata:
   openclaw:
     requires:
@@ -980,7 +980,7 @@ Returned in full (the freezer is a small bounded inventory) — no pagination. `
 
 ### "I ate this one" / "Mark these as eaten"
 
-Moves a meal out of the freezer and into history. The meal ID is the `id` from `GET /me/meals/freezer`.
+Moves a meal out of the freezer and into history. The meal ID is the `id` from `GET /me/meals/freezer`. Only delivered meals can be marked as eaten: a meal still in an upcoming basket is refused.
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
@@ -1009,7 +1009,38 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 
 `eaten_at` accepts an ISO 8601 string or epoch milliseconds. It may not be in the future (400). **Always ask the user which day they ate something rather than guessing** — the date lands in their meal history and their daily nutrition totals (`GET /me/nutrition/summary`), so a wrong date quietly corrupts both.
 
-Safe to re-send: marking an already-eaten meal just moves its date, and `was_already_eaten` tells you which happened. Clearing a backlog is one call per meal.
+Safe to re-send: marking an already-eaten meal just moves its date, and `was_already_eaten` tells you which happened.
+
+**Several meals at once — clearing a backlog.** Use `POST /me/meals/eat` with up to **100 meals per call**. A whole call counts as **one write** against the [rate limits](#rate-limits), so a freezer backlog takes a few calls instead of hundreds. Use the single-meal route above for one or two meals.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"meals": [
+        {"id": "690f25d559ecd62698981904", "eaten_at": "2026-08-01T19:30:00.000Z"},
+        {"id": "690f25d559ecd62698981905", "eaten_at": "2026-08-02T12:30:00.000Z"},
+        {"id": "690f25d559ecd62698981906"}
+      ]}' \
+  "https://symphony.fr/api/v3/me/meals/eat?reason=User+is+catching+up+on+meals+they+forgot+to+log"
+```
+
+```json
+{
+  "data": {
+    "results": [
+      { "id": "690f25d559ecd62698981904", "status": "eaten", "eaten_at": "2026-08-01T19:30:00.000Z", "was_already_eaten": false },
+      { "id": "690f25d559ecd62698981905", "status": "eaten", "eaten_at": "2026-08-02T12:30:00.000Z", "was_already_eaten": true },
+      { "id": "690f25d559ecd62698981906", "status": "not_found", "error": "No meal found with ID 690f25d559ecd62698981906 for this user" }
+    ],
+    "summary": { "requested": 3, "eaten": 2, "already_eaten": 1, "not_found": 1, "discarded": 0, "not_delivered": 0, "failed": 0 },
+    "next_actions": ["view_meal_history", "view_freezer"]
+  }
+}
+```
+
+- `eaten_at` per meal works as above (ISO 8601 or epoch ms, not in the future). Leave it out for "eaten now". The same rule applies: **ask the user when they ate things.** For a large backlog, agree on a rough date per meal with them (e.g. "the week after each delivery") rather than inventing dates.
+- **Bad input rejects the whole call** (400, nothing written): an empty list, more than 100 meals, an invalid or repeated ID, or a bad `eaten_at`. The message names the item, e.g. `meals[3].eaten_at`.
+- **Otherwise the call returns 200 with one result per meal**, in the order you sent them. `status` is `eaten`, `not_found` (unknown, or not this user's), `discarded` (thrown away, can't be eaten), `not_delivered` (still in an upcoming basket, so it can't be eaten yet), or `error` (save failed, safe to resend). One stale ID doesn't block the rest. Check `summary`, and resend only the `error` items.
 
 > **Don't use `POST /recipes/{mealId}/rate` to mark a meal as eaten.** Rating does mark it eaten as a side effect, but it also writes into the recipe's **public** average rating that every other customer sees. Marking a backlog of meals eaten that way means inventing ratings the user never gave. Rate only when the user actually wants to rate.
 
@@ -1217,7 +1248,8 @@ def auto_donors(qty, min_prop=0.03):
 parent_id = "64917cba5d59e87e7ba417cd"
 recipe = GET(f"/recipes/{parent_id}")
 
-qty = [0.0] * 306
+n = max(i["short_id"] for i in GET("/ingredients?include_out_of_stock=true")) + 1
+qty = [0.0] * n
 for ing in recipe["ingredients"]:
     qty[ing["short_id"]] = ing["proportion"]
 
@@ -1378,12 +1410,12 @@ Only use `"original": true` when creating a recipe from scratch with no existing
 curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   -H "Content-Type: application/json" \
   "https://symphony.fr/api/v3/recipes?reason=User+asked+for+a+brand+new+dish" \
-  -d '{"ingredient_quantities": [0.3, 0, 0, 0, ...306 values...], "original": true, "title": "My New Recipe"}'
+  -d '{"ingredient_quantities": [0.3, 0, 0, 0, ...one value per short_id...], "original": true, "title": "My New Recipe"}'
 ```
 
 #### Body reference
 
-- `ingredient_quantities` (required): array of exactly **306 floats** — one per ingredient, indexed by `short_id` (0–305). Set the proportion for each ingredient you want; use `0` for ingredients not in the recipe. Proportions should sum to 1.0 (or close to it).
+- `ingredient_quantities` (required): array of floats, one per ingredient, indexed by `short_id`. Its length is at most the highest `short_id` + 1. Get that from `GET /ingredients?include_out_of_stock=true`: the catalog grows, so never hardcode the length. Shorter arrays are accepted, and missing ingredients count as `0`. Set the proportion for each ingredient you want; use `0` for ingredients not in the recipe. Proportions should sum to 1.0 (or close to it).
 - `parent_recipe_id` **(default — use this)**: the `id` of the recipe you're modifying. Creates a version-linked child recipe.
 - `original` (rare): set to `true` ONLY for genuinely new recipes with no ancestor. Cannot be combined with `parent_recipe_id`.
 - `title` (optional): recipe name, max 200 characters.
@@ -1587,6 +1619,7 @@ Synthesis pages are public (no auth required) and updated periodically. Check `u
 | `/me/meals/history` | GET | Yes | Meal history (paginated) |
 | `/me/meals/freezer` | GET | Yes | Freezer — meals received but not yet eaten |
 | `/me/meals/{mealId}/eat` | POST | Yes | Mark a meal as eaten; optional `eaten_at` to backdate |
+| `/me/meals/eat` | POST | Yes | Mark up to 100 meals as eaten in one call (one write) |
 | `/me/meals/upcoming-basket` | GET | Yes | Current upcoming basket |
 | `/me/meals/upcoming-basket` | POST | Yes | Add meals to basket |
 | `/me/meals/upcoming-basket` | PATCH | Yes | Update meal quantity/count |
@@ -1620,4 +1653,26 @@ Synthesis pages are public (no auth required) and updated periodically. Check `u
 | 401 | Unauthorized | Check API key |
 | 403 | Forbidden (RBAC / not owner) | User lacks permission |
 | 404 | Not found | Check the ID |
+| 429 | Rate limited | Wait `Retry-After` seconds, then resend. See [Rate limits](#rate-limits) |
 | 500 | Server error | Retry or report |
+
+### Rate limits
+
+Limits are per API key. Reads (`GET`) only count against the global limit.
+
+| Bucket | Applies to | Limit |
+|---|---|---|
+| Global | every request | 200 / minute |
+| Writes | every `POST` / `PUT` / `PATCH` / `DELETE` except feedback | 25 / minute, 50 / hour, 200 / day, 2000 / month |
+| Recipe creation | `POST /recipes` (also counts as a write) | 10 / minute |
+| Feedback | writes to `/feedback` (separate from the write limits) | 50 / hour |
+
+Windows are fixed: they start at the first request and reset after their length (`Retry-After` tells you exactly when). Rejected requests don't count, so a 429 never eats into your quota.
+
+**Headers on every response:**
+- `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset` (seconds): the **global** bucket only.
+- `X-RateLimit-Write-Limit` / `X-RateLimit-Write-Remaining` / `X-RateLimit-Write-Reset` / `X-RateLimit-Write-Window`: on writes, the **tightest** write (or feedback) bucket. Trust these, not `X-RateLimit-Remaining`, when pacing writes.
+
+**On a 429:** `Retry-After` (seconds) and `X-RateLimit-Window` (`minute`/`hour`/`day`/`month`) say which bucket is full. Nothing was changed, so the same request is safe to resend once `Retry-After` has passed. Don't retry sooner. If the wait is longer than a few minutes, tell the user how long and stop rather than waiting silently.
+
+**Many writes in a row:** to mark meals as eaten, use the bulk `POST /me/meals/eat` (up to 100 meals per call, one write per call). For other writes, send them one at a time and watch `X-RateLimit-Write-Remaining`. More than 50 writes takes more than an hour, so tell the user up front how long it will take and offer to do the most important ones first. You can still send `POST /feedback` while writes are blocked.
