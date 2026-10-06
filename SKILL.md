@@ -10,7 +10,7 @@ description: >-
   copy their key; send users without an account to
   https://symphony.fr/signup?urlToShowAfterAuth=/api-key (they land on the key page right
   after signing up).
-version: 3.1.1
+version: 3.1.2
 metadata:
   openclaw:
     requires:
@@ -402,6 +402,8 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
       {
         "id": "6336dbba6ac970d8e808e862",
         "title": "Curry de pois chiches aux épinards",
+        "version_node_id": "6489f0c2a1b3d4e5f6a7b8c9",
+        "version_root_id": "63ce63c1a1b3d4e5f6a7b8c9",
         "nutrition_per_100g": { "energy": 123.34, "protein": 5.02, "fiber": 4.32, "..." : "35 properties" },
         "portion_grams": 567,
         "image": "https://symphony.fr/cdn-cgi/imagedelivery/.../w=256,h=256"
@@ -412,6 +414,15 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
   }
 }
 ```
+
+**Version lineage on each result.** Every recipe carries `version_root_id` — the
+stable id of its **version family**, identical across every version and
+personalization of a recipe — and `version_node_id`, the exact version. Match
+`version_root_id` against the `version_root_id` on `/me/baskets` and
+`/me/meals/history` to tell whether the user already knows this family, which is
+robust where title matching isn't (titles mutate across versions). The
+direct-ancestor `parent_recipe_id` is **not** included here — it's on the
+recipe-detail response; fetch `GET /recipes/{id}` if you need it.
 
 **`portion_grams` — preview the auto-portion before adding.** When a calorie
 target is known, each recipe includes `portion_grams`: the gram portion that
@@ -460,10 +471,27 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
     ],
     "nutrition_per_100g": { "energy": 123.34, "protein": 5.02, "fiber": 4.32, "..." : "35 properties" },
     "image": "https://symphony.fr/cdn-cgi/imagedelivery/...",
+    "version_node_id": "6489f0c2a1b3d4e5f6a7b8c9",
+    "version_root_id": "63ce63c1a1b3d4e5f6a7b8c9",
+    "parent_recipe_id": null,
     "next_actions": ["add_to_basket", "add_to_playlist", "rate_recipe"]
   }
 }
 ```
+
+**Version lineage fields.** These place the recipe in Symphony's versioning tree:
+
+- `version_root_id` — stable id of the recipe's **version family**, identical
+  across every version and personalization of a recipe. Join it against the
+  `version_root_id` on `/me/baskets` and `/me/meals/history` to tell whether the
+  user already knows this family — robust where title matching isn't, since
+  titles mutate across versions.
+- `version_node_id` — the **exact version** (this specific node) of the recipe.
+- `parent_recipe_id` — the recipe's **direct lineage parent**, or `null` for an
+  original with no ancestor. This is the same id `POST /recipes` accepts as
+  `parent_recipe_id`. (To fork *this* recipe, pass its own `id` as
+  `parent_recipe_id` — see **Personalize** and **Ingredient substitution**;
+  `parent_recipe_id` here is provenance, i.e. what this recipe was derived from.)
 
 **Show the user a recipe.** When the user wants to actually *see* a recipe (image, full breakdown) in their browser, give them the shareable page for its `id`:
 
@@ -638,10 +666,27 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
       }
     ],
     "count": 1,
+    "totals": {
+      "meal_count": 1, "total_energy_kcal": 812,
+      "subtotal_eur": 13.9, "discount_eur": 0, "meals_total_eur": 13.9,
+      "shipping_eur": 10.0, "total_price_eur": 23.9,
+      "qualifies_for_free_shipping": false, "free_shipping_threshold_eur": 40,
+      "amount_to_free_shipping_eur": 26.1, "delivery_method": "doorstep"
+    },
     "next_actions": ["add_meal", "remove_meal", "place_order", "browse_recipes"]
   }
 }
 ```
+
+`totals` summarises the whole basket. `meal_count` is the number of portions
+(sum of each line's `meal_count`) — use it, not `count` (which is the number of
+lines). Pricing mirrors checkout: `meals_total_eur` is the food after any
+discount, `shipping_eur` is the delivery fee **for the user's active delivery
+method** (already `0` when the basket clears the free-shipping threshold), and
+`total_price_eur` is the all-in price. Frame delivery positively: when
+`qualifies_for_free_shipping` is false, `amount_to_free_shipping_eur` is how much
+more food gets free delivery (e.g. "add €26 more and delivery's free"). The
+thresholds are low (doorstep is free over €40), so most baskets ship free.
 
 ---
 
@@ -1140,7 +1185,7 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 }
 ```
 
-Rating: integer 1–5. Comment: optional string.
+Rating: integer 1–5. Comment: optional string. **The comment is a public review**, shown on the recipe page to all customers with the user's display name. Never put instructions or private preferences in it — those go in `PUT /me/context`.
 
 ---
 
