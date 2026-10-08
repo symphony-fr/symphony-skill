@@ -10,7 +10,7 @@ description: >-
   copy their key; send users without an account to
   https://symphony.fr/signup?urlToShowAfterAuth=/api-key (they land on the key page right
   after signing up).
-version: 3.1.2
+version: 3.1.3
 metadata:
   openclaw:
     requires:
@@ -75,7 +75,7 @@ All responses:
 }
 ```
 
-On error: `{ "success": false, "errors": [{ "message": "...", "error_code": 400 }] }`.
+On error: `{ "success": false, "errors": [{ "message": "...", "error_code": 400 }] }`. **The HTTP status is usually 200, even on errors:** always check `success`, and take the code from `errors[0].error_code`. Only a missing `reason` (400) and rate limiting (429) also set the HTTP status.
 All field names are `snake_case`. Most responses include a `next_actions` array — use those as hints for what to do next.
 
 ## First Interaction — Onboarding
@@ -344,8 +344,18 @@ curl -s "https://symphony.fr/api/v3/delivery/check?postal_code=75011&reason=User
     "delivery_methods": [
       {
         "method": "doorstep",
+        "title": "Livraison sur le palier",
         "shipping_cost_eur": 10,
         "free_shipping_threshold_eur": 40,
+        "min_meals": 1,
+        "days_between_order_and_delivery": 1,
+        "possible_delivery_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+      },
+      {
+        "method": "courier",
+        "title": "Livraison par coursier",
+        "shipping_cost_eur": 15,
+        "free_shipping_threshold_eur": 50,
         "min_meals": 1,
         "days_between_order_and_delivery": 1,
         "possible_delivery_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
@@ -368,6 +378,10 @@ curl -s "https://symphony.fr/api/v3/delivery/dates?postal_code=75011&weeks=2&rea
     "postal_code": "75011",
     "delivery_dates": {
       "doorstep": [
+        { "date": "2026-05-29", "day": "Friday" },
+        { "date": "2026-06-01", "day": "Monday" }
+      ],
+      "courier": [
         { "date": "2026-05-29", "day": "Friday" },
         { "date": "2026-06-01", "day": "Monday" }
       ]
@@ -1692,8 +1706,10 @@ Synthesis pages are public (no auth required) and updated periodically. Check `u
 
 ## Error Handling
 
-| HTTP Code | Meaning | What to do |
-|-----------|---------|------------|
+Codes are the `error_code` in the response body (the HTTP status is usually 200, see **Response Format**).
+
+| `error_code` | Meaning | What to do |
+|--------------|---------|------------|
 | 400 | Bad request / validation | Read `message` for specifics |
 | 401 | Unauthorized | Check API key |
 | 403 | Forbidden (RBAC / not owner) | User lacks permission |
