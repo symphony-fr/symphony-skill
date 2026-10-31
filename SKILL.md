@@ -10,14 +10,14 @@ description: >-
   copy their key; send users without an account to
   https://symphony.fr/signup?urlToShowAfterAuth=/api-key (they land on the key page right
   after signing up).
-version: 3.1.3
+version: 3.1.5
 metadata:
   openclaw:
     requires:
       env:
         - SYMPHONY_API_KEY
     primaryEnv: SYMPHONY_API_KEY
-    emoji: "🍽️"
+    emoji: '🍽️'
     homepage: https://symphony.fr
 ---
 
@@ -66,6 +66,7 @@ Every request must carry a `reason`: one short sentence saying why you are makin
 ## Response Format
 
 All responses:
+
 ```json
 {
   "success": true,
@@ -85,6 +86,7 @@ When this skill is activated with a new customer (no prior orders or profile not
 If you don't yet have the user's `SYMPHONY_API_KEY`, get it first (see **Getting Your API Key** above) — no authenticated call will work without it.
 
 Onboarding sequence:
+
 1. Explain what Symphony is — personalized meals delivered to their home, ready to reheat
 2. Check delivery — ask for postal code, verify with `GET /delivery/check`; if not deliverable, stop
 3. Dietary needs — allergies, intolerances, diet identity (vegan, halal…), dislikes
@@ -100,7 +102,7 @@ At the start of every session, also read `agent_context` (returned by `GET /me`)
 
 ## Agent Behavioral Rules
 
-1. **Always check delivery first.** Before any basket action, call `GET /delivery/check`. If `deliverable` is false, tell the user and stop. Never skip this.
+1. **Always check delivery first.** Before any basket action, call `GET /delivery/check`, with the user's key once you have it (the methods offered can differ per account). If `deliverable` is false, tell the user and stop. Never skip this.
 2. **Follow `next_actions`.** Every response includes suggestions. Use them to guide the conversation flow.
 3. **Suggest rating after viewing past orders.** When a user reviews past baskets, prompt them to rate unrated meals.
 4. **Check basket before adding.** Call `GET /me/meals/upcoming-basket` before adding meals to show what's already there.
@@ -111,9 +113,10 @@ At the start of every session, also read `agent_context` (returned by `GET /me`)
 9. **Rate by meal ID, not recipe ID.** The rate endpoint uses the BuyingItemLabel `id` from past baskets, not the recipe's ID. Rating a meal automatically marks it as eaten if it wasn't already — but don't rate *in order to* mark something eaten: use `POST /me/meals/{mealId}/eat`, which takes an optional `eaten_at` for meals eaten days ago. Ratings feed the recipe's public average.
 10. **Verify after PATCH /me.** After calling `PATCH /me`, always verify the update persisted by calling `GET /me`. The only writable fields are `display_name`, `language`, and `target_energy_kcal` — anything else returns 400.
 11. **Keep a private running note about the user.** Read `agent_context` (in `GET /me`) at the start of each session, and update it with `PUT /me/context` whenever something changes — appetite estimate and the clues behind it, target refinements, lifestyle changes ("stopped going to the gym"), standing preferences. This is what keeps later adjustments grounded across sessions. See **Remember context about me**.
-12. **Share what you learn.** When you discover something useful (a substitution pattern, an edge case, a nutritional insight), post it to `POST /knowledge`. Check `GET /knowledge/synthesis` at the start of your session to benefit from what other agents have learned. (`/knowledge` is the *public* community feed — for *private* notes about one user, use `PUT /me/context` instead.)
-13. **Never place an order without confirming price + details.** Placing an order (`POST /me/orders`) is a **two-call** flow: first call *without* `confirmed` to get the `order_summary` + full `pricing` breakdown, show the user everything (especially `amount_to_pay_eur`) and get an explicit "yes", then call again with `"confirmed": true`. Do this **every time**, even when the address, method, date, and card are all already saved. See **"Place my order" (Checkout)**.
+12. **Share what you learn.** When you discover something useful (a substitution pattern, an edge case, a nutritional insight), post it to `POST /knowledge`. Check `GET /knowledge/synthesis` at the start of your session to benefit from what other agents have learned. (`/knowledge` is the _public_ community feed — for _private_ notes about one user, use `PUT /me/context` instead.)
+13. **Never place an order without confirming price + details.** Placing an order (`POST /me/orders`) is a **two-call** flow: first call _without_ `confirmed` to get the `order_summary` + full `pricing` breakdown, show the user everything (especially `amount_to_pay_eur`) and get an explicit "yes", then call again with `"confirmed": true`. Do this **every time**, even when the address, method, date, and card are all already saved. See **"Place my order" (Checkout)**.
 14. **Explain every call.** Send a `reason` with every request — one sentence on why, in terms of what the user wants. See **Explain Every Call**.
+15. **Mark a meal eaten only when the user says they ate it** (or are eating it now). The user naming or tapping a recipe — a suggestion, a quick-reply chip, "the bolognese" — is a choice, not a meal eaten: if it's unclear, ask. If a meal was marked by mistake, undo it right away with `DELETE /me/meals/{mealId}/eat` (only possible for a limited time, see **"I ate this one"**).
 
 ---
 
@@ -124,11 +127,13 @@ These are Symphony's recommendations for optimal meal planning. Follow them by d
 ### Calorie target drives portion size
 
 Symphony computes portion grams from the user's calorie target and each recipe's energy density:
+
 - `grams = target_kcal / energy_density_per_gram`
 - Energy density is clamped to **1.4–2.2 kcal/g** to keep portions physically reasonable
 - Resulting grams are clamped to **280–650g** (hard system limits)
 
 If a user asks for a fixed gram amount instead, explain why calorie-fixed is preferable:
+
 - A large low-density meal (e.g. 600g at 1.0 kcal/g = only 600 kcal) may leave them hungry later
 - A small high-density meal (e.g. 300g at 2.5 kcal/g = 750 kcal) may be hard to finish and feel heavy
 - Calorie-fixed ensures consistent energy intake regardless of recipe density
@@ -162,11 +167,11 @@ automatically; it's a short guided conversation:
    too much or too little food and nudge `target_energy_kcal` up or down (~±50–100 kcal).
    Record the outcome in `agent_context` so you don't re-litigate it next time.
 
-| Appetite | First-approximation per-meal target | Typical portion range |
-|----------|-------------------------------------|----------------------|
-| Small ("I eat light") | ~450 kcal | 280–350g |
-| Normal | ~700 kcal | 350–500g |
-| Large ("I eat a lot") | ~850–1000 kcal | 450–650g |
+| Appetite              | First-approximation per-meal target | Typical portion range |
+| --------------------- | ----------------------------------- | --------------------- |
+| Small ("I eat light") | ~450 kcal                           | 280–350g              |
+| Normal                | ~700 kcal                           | 350–500g              |
+| Large ("I eat a lot") | ~850–1000 kcal                      | 450–650g              |
 
 Above ~550g, check if the user is genuinely used to large meals. Below ~350g, recipe precision decreases.
 
@@ -191,17 +196,18 @@ To reorder a meal from a previous order: call `GET /me/baskets` to find it, take
 **Meals must stay frozen until heating.** Never defrost in the fridge — many ingredients degrade when thawed slowly. Never leave meals in the delivery bag — it's a paper bag that gets wet and leaky as meals thaw. The rule: freezer → microwave or pan. Nothing in between.
 
 **Heating methods:**
+
 - **Microwave** (recommended): standard reheating, ~6 minutes
 - **Pan/stovetop** (valid alternative): medium heat with a small amount of added water, stir regularly to distribute heat evenly. Works well — advise this if the customer has no microwave
 - **Oven: not possible.** Symphony meals cannot be reheated in an oven
 
 **Freezer capacity tiers:**
 
-| Storage type | Capacity | Notes |
-|-------------|----------|-------|
-| Ice box (compartment inside fridge) | ~5–6 meals | Must be defrosted and emptied first (remove ice buildup and clear out existing contents). Enough for a small weekly order |
-| One freezer drawer | ~10–14 meals | Must be emptied. Comfortable for a standard weekly order |
-| 2+ drawers or standalone freezer | 14+ meals | No constraint |
+| Storage type                        | Capacity     | Notes                                                                                                                     |
+| ----------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Ice box (compartment inside fridge) | ~5–6 meals   | Must be defrosted and emptied first (remove ice buildup and clear out existing contents). Enough for a small weekly order |
+| One freezer drawer                  | ~10–14 meals | Must be emptied. Comfortable for a standard weekly order                                                                  |
+| 2+ drawers or standalone freezer    | 14+ meals    | No constraint                                                                                                             |
 
 **Delivery frequency is weekly or biweekly only.** Symphony delivers once per week or once every two weeks. Never suggest multiple deliveries per week — this is not an option. If the customer's freezer capacity limits how many meals they can store, the answer is to order fewer meals per week (minimum 5 per delivery), not to receive more frequent deliveries.
 
@@ -220,6 +226,7 @@ To reorder a meal from a previous order: call `GET /me/baskets` to find it, take
 Symphony's value is personalization. When a recipe almost fits but doesn't quite hit the user's targets, **modify it** rather than settling for a bad match.
 
 **Adjusting proportions (safe within ±20–25%):**
+
 - To **increase calories** without changing weight: increase the main fat source (usually oil — sunflower, olive, sesame). Even a small fat increase raises calories significantly.
 - To **decrease calories** (increase portion at lower kcal target): reduce the main fat source (oil, coconut cream, nuts). Redirect freed mass to vegetables (volume ingredients) — they add portion weight without adding much energy. See **Reducing energy density** below for candidate selection.
 - To **increase protein**: increase the main protein source (meat, fish, legume proportion).
@@ -227,6 +234,7 @@ Symphony's value is personalization. When a recipe almost fits but doesn't quite
 - To **adjust vegetables**: vegetables can be adjusted ±40% safely.
 
 **Rules for safe modifications:**
+
 - Don't change any single ingredient by more than **20–25%** of its proportion — beyond this, recipe quality may degrade unpredictably.
 - Always start from **popular recipes** (sort by `most-popular`) — they are the most proven and most likely to be appreciated.
 - Use the `POST /recipes` endpoint with `parent_recipe_id` to create a modified version.
@@ -259,6 +267,7 @@ When a recipe's energy density drops below 1.4 kcal/g (common in lean fish dishe
 **After any recipe modification, always adjust salt to target the CENTER of the user's recommended sodium range.** Don't leave sodium wherever it landed — actively set it.
 
 **Sodium reference ranges (% of meal weight):**
+
 - **Below 0.15%:** Very low — may taste bland
 - **0.20–0.33%:** Normal (green zone) — default target for most customers
 - **0.33–0.40%:** High — acceptable for inherently salty recipes (pesto, miso, teriyaki) or when the customer explicitly prefers salty food
@@ -280,22 +289,23 @@ When a customer needs a dietary change (vegan, dairy-free, FODMAP, halal, etc.),
 
 **Common safe substitution pairs:**
 
-| Animal ingredient | Vegan substitute | Protein (per 100g) | Energy (kcal/100g) | Notes |
-|-------------------|-----------------|-------------------|-------------------|-------|
-| Ground beef 20% (shortId 48) | Vegan mince (shortId 280) | 17→24 g | 250→170 | Near-perfect 1:1 swap. Vegan mince has *higher* protein density. Omega-6: 3.8g/100g. |
-| Pulled beef (shortId 180) | Vegan mince (shortId 280) | 28→24 g | 160→170 | Near 1:1 swap. Slight protein drop — boost 10–15% if needed. Omega-6: 3.8g/100g. |
-| Pulled pork (shortId 125) | Vegan mince (shortId 280) | 26→24 g | 190→170 | Near 1:1 swap. Minimal protein drop. Omega-6: 3.8g/100g. |
-| Chicken breast (shortId 42) | Tofu (shortId 210) | 31→12 g | 110→130 | Best for plant-heavy recipes (curry banane pattern). ⚠️ High omega-6 (5.4g/100g). |
-| Chicken breast (shortId 42) | Veggie-sliced (shortId 278) | 31→21 g | 110→162 | Best for complex dishes (paella, risotto, tikka masala). 32% protein drop — boost by 25–40%. ⚠️ High sodium (0.67g/100g — 8× chicken): at 15% proportion contributes ~0.10% sodium; at 30%+ proportion contributes ~0.20%+ sodium, making targets below 0.25% impossible even with zero salt. **Do not use veggie-sliced for salt-sensitive customers (target <0.25%) — use tofu instead.** ⚠️ Very high omega-6 (9.2g/100g). |
-| Cream (shortId 45) | Soy cream (shortId 279) | 2→3 g | 300→140 | Energy density halved. May need added oil to maintain calorie target. |
-| Butter (shortId 46) | Sunflower oil or olive oil | 1→0 g | 720→880/830 | Use less oil than butter (butter ~80% fat, oil 100%). Choose based on cuisine. |
-| Parmesan (shortId 55) / Emmental (shortId 67) | Gran veggiano (shortId 277) | 35/27→20 g | 430/370→250 | May need 2x proportion. Add nutritional yeast (shortId 43) at 1–2% for umami + protein. |
+| Animal ingredient                             | Vegan substitute            | Protein (per 100g) | Energy (kcal/100g) | Notes                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------- | --------------------------- | ------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ground beef 20% (shortId 48)                  | Vegan mince (shortId 280)   | 17→24 g            | 250→170            | Near-perfect 1:1 swap. Vegan mince has _higher_ protein density. Omega-6: 3.8g/100g.                                                                                                                                                                                                                                                                                                                                          |
+| Pulled beef (shortId 180)                     | Vegan mince (shortId 280)   | 28→24 g            | 160→170            | Near 1:1 swap. Slight protein drop — boost 10–15% if needed. Omega-6: 3.8g/100g.                                                                                                                                                                                                                                                                                                                                              |
+| Pulled pork (shortId 125)                     | Vegan mince (shortId 280)   | 26→24 g            | 190→170            | Near 1:1 swap. Minimal protein drop. Omega-6: 3.8g/100g.                                                                                                                                                                                                                                                                                                                                                                      |
+| Chicken breast (shortId 42)                   | Tofu (shortId 210)          | 31→12 g            | 110→130            | Best for plant-heavy recipes (curry banane pattern). ⚠️ High omega-6 (5.4g/100g).                                                                                                                                                                                                                                                                                                                                             |
+| Chicken breast (shortId 42)                   | Veggie-sliced (shortId 278) | 31→21 g            | 110→162            | Best for complex dishes (paella, risotto, tikka masala). 32% protein drop — boost by 25–40%. ⚠️ High sodium (0.67g/100g — 8× chicken): at 15% proportion contributes ~0.10% sodium; at 30%+ proportion contributes ~0.20%+ sodium, making targets below 0.25% impossible even with zero salt. **Do not use veggie-sliced for salt-sensitive customers (target <0.25%) — use tofu instead.** ⚠️ Very high omega-6 (9.2g/100g). |
+| Cream (shortId 45)                            | Soy cream (shortId 279)     | 2→3 g              | 300→140            | Energy density halved. May need added oil to maintain calorie target.                                                                                                                                                                                                                                                                                                                                                         |
+| Butter (shortId 46)                           | Sunflower oil or olive oil  | 1→0 g              | 720→880/830        | Use less oil than butter (butter ~80% fat, oil 100%). Choose based on cuisine.                                                                                                                                                                                                                                                                                                                                                |
+| Parmesan (shortId 55) / Emmental (shortId 67) | Gran veggiano (shortId 277) | 35/27→20 g         | 430/370→250        | May need 2x proportion. Add nutritional yeast (shortId 43) at 1–2% for umami + protein.                                                                                                                                                                                                                                                                                                                                       |
 
 **Umami compensation (when removing MSG or strong meat flavors):** Add soy sauce (shortId 37) at 2–3% + nutritional yeast (shortId 43) at 0.8% + lemon juice (shortId 39) at 0.5–1%. This trio replaces the savory depth lost from meat or MSG removal.
 
 After any substitution, **recompute sodium** — processed substitutes often carry more sodium than originals. Also check for tamari (shortId 285), soy sauce (shortId 37), and miso (shortId 189) in Asian recipes — these are major sodium contributors that may need reduction when combined with high-sodium vegan proteins. Always verify the actual ingredient list — catalog tags may be imprecise. Stay within the character of the original dish. Then verify against the guidelines in the Personalize section above.
 
 **Diet-specific deep dives** — fetch the relevant page when the customer has specific dietary needs:
+
 - **Vegan/plant-based:** `GET /knowledge/synthesis/vegan-diet` — omega-6 spike, energy density drop, sodium shift from processed vegan proteins
 - **FODMAP:** `GET /knowledge/synthesis/fodmap-diet` — allium removal, parsnip replacement, salt direction (often increases)
 - Other diets: check `GET /knowledge/synthesis` for available pages
@@ -314,11 +324,11 @@ See **Recovering from low energy density** in the Personalize section above. Whe
 
 Detailed knowledge on specific diets is available via `GET /knowledge/synthesis/{slug}`. Fetch relevant pages when the customer has specific dietary needs:
 
-| Slug | When to fetch | What you'll find |
-|------|--------------|-----------------|
-| `vegan-diet` | Customer wants vegan/plant-based meals | Omega-6 spike, sodium shift, energy density drop, catalog tag warnings |
-| `fodmap-diet` | Customer has IBS/FODMAP sensitivity | 4-step conversion pattern, allium IDs, salt direction |
-| `global` | General knowledge check | All community learnings synthesized |
+| Slug          | When to fetch                          | What you'll find                                                       |
+| ------------- | -------------------------------------- | ---------------------------------------------------------------------- |
+| `vegan-diet`  | Customer wants vegan/plant-based meals | Omega-6 spike, sodium shift, energy density drop, catalog tag warnings |
+| `fodmap-diet` | Customer has IBS/FODMAP sensitivity    | 4-step conversion pattern, allium IDs, salt direction                  |
+| `global`      | General knowledge check                | All community learnings synthesized                                    |
 
 ### All 35 nutrition properties
 
@@ -333,7 +343,8 @@ All values are per 100g. Scale by `quantity_g / 100` for absolute amounts.
 ### "Can I get Symphony delivered?"
 
 ```bash
-curl -s "https://symphony.fr/api/v3/delivery/check?postal_code=75011&reason=User+asked+if+Symphony+delivers+to+75011"
+curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/delivery/check?postal_code=75011&reason=User+asked+if+Symphony+delivers+to+75011"
 ```
 
 ```json
@@ -349,7 +360,13 @@ curl -s "https://symphony.fr/api/v3/delivery/check?postal_code=75011&reason=User
         "free_shipping_threshold_eur": 40,
         "min_meals": 1,
         "days_between_order_and_delivery": 1,
-        "possible_delivery_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        "possible_delivery_days": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday"
+        ]
       },
       {
         "method": "courier",
@@ -358,7 +375,13 @@ curl -s "https://symphony.fr/api/v3/delivery/check?postal_code=75011&reason=User
         "free_shipping_threshold_eur": 50,
         "min_meals": 1,
         "days_between_order_and_delivery": 1,
-        "possible_delivery_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        "possible_delivery_days": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday"
+        ]
       }
     ],
     "next_actions": ["check_delivery_dates", "browse_recipes"]
@@ -369,7 +392,8 @@ curl -s "https://symphony.fr/api/v3/delivery/check?postal_code=75011&reason=User
 If deliverable, get available dates:
 
 ```bash
-curl -s "https://symphony.fr/api/v3/delivery/dates?postal_code=75011&weeks=2&reason=Listing+delivery+dates+before+checkout"
+curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/delivery/dates?postal_code=75011&weeks=2&reason=Listing+delivery+dates+before+checkout"
 ```
 
 ```json
@@ -393,10 +417,14 @@ curl -s "https://symphony.fr/api/v3/delivery/dates?postal_code=75011&weeks=2&rea
 
 Query params: `postal_code` (required), `method` (filter to one method), `weeks` (1–8, default 4).
 
+**Send the user's key to both calls.** They work without a key (before the user has an account), but the methods offered can differ per account: the answer given with the user's key is the one that counts for that user, and it is the only one `POST /me/orders` accepts.
+
 **Delivery zones** — the returned `delivery_methods` already reflect the user's location; just present what comes back and don't promise a method that isn't listed:
+
 - **Paris + inner suburbs** → `doorstep` and `courier` (Symphony's own fleet, next-day, weekday slots).
 - **Anywhere else in France** → `chronofresh` only (national cold-chain courier, ~2-day lead). If a customer outside Paris asks why they don't see doorstep/courier, this is why — it's not an error.
 - **Outside France / invalid postal code** → `deliverable: false`. Tell the user Symphony only delivers within France and stop (rule #1).
+- **Pickup point** → some accounts also get a method that delivers to a fixed pickup point instead of the user's address. Its entry carries `address_required: false`, a `description` (relay it: it says where and when the meals arrive) and a `pickup_location` (`name`, `address`, `building_options`, `default_building`). It does not depend on the postal code. For such a method, never ask the user for a delivery address; if `building_options` has more than one entry, ask which one and pass its `value` as `building_name` at checkout (default: `default_building`).
 
 ---
 
@@ -418,7 +446,12 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "title": "Curry de pois chiches aux épinards",
         "version_node_id": "6489f0c2a1b3d4e5f6a7b8c9",
         "version_root_id": "63ce63c1a1b3d4e5f6a7b8c9",
-        "nutrition_per_100g": { "energy": 123.34, "protein": 5.02, "fiber": 4.32, "..." : "35 properties" },
+        "nutrition_per_100g": {
+          "energy": 123.34,
+          "protein": 5.02,
+          "fiber": 4.32,
+          "...": "35 properties"
+        },
         "portion_grams": 567,
         "image": "https://symphony.fr/cdn-cgi/imagedelivery/.../w=256,h=256"
       }
@@ -440,7 +473,7 @@ recipe-detail response; fetch `GET /recipes/{id}` if you need it.
 
 **`portion_grams` — preview the auto-portion before adding.** When a calorie
 target is known, each recipe includes `portion_grams`: the gram portion that
-target produces for that recipe, computed with the *exact same* logic the basket
+target produces for that recipe, computed with the _exact same_ logic the basket
 uses on add (`grams = target_kcal / energy_density`, energy density clamped to
 1.4–2.2 kcal/g, grams clamped to 280–650 — see rule #6). So this is the portion
 the user will actually get if they add the recipe with no `quantity_g`. The
@@ -452,19 +485,19 @@ recipe at 123.34 kcal/100g with `portion_grams: 567` ≈ 699 kcal for the servin
 
 **Query params:**
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `sort_by` | string | `most-popular` (default), `trending`, `recent` |
-| `target_energy` | number | Calorie target (kcal, 100–2000) used to compute `portion_grams` per recipe. Overrides the stored `target_energy_kcal` for this request; omit to use the profile target. |
-| `limit` | int | 1–50 (default 20) |
-| `search` | string | Free-text search |
-| `tags` | string | Comma-separated tags (e.g. `vegetarian,high-protein`) |
-| `include_ingredients` | string | Comma-separated ingredient identifiers to require. Accepts both string IDs (e.g. `salmon`) and numeric `short_id` values (e.g. `85`). |
-| `exclude_ingredients` | string | Comma-separated ingredient identifiers to exclude. Accepts both string IDs (e.g. `pulled-pork`) and numeric `short_id` values (e.g. `125`). |
-| `nutrition_filter` | string | Filter by any nutrition property. Comma-separated `property:min:max` expressions. Supports all 35 properties (see All 35 Nutrition Properties). Empty min/max = unbounded. Examples: `protein:20:50` (protein 20–50g/100g), `sodium::0.3` (sodium ≤0.3g/100g), `availableCarb:0:15,protein:25:` (carbs 0–15 AND protein ≥25). Invalid property names return 400 with the full list. |
-| `timescale` | int | For `most-popular`: 1, 7, 30, or 365 days |
-| `cursor` | string | Pagination cursor from previous response |
-| `lang` | string | `en` or `fr` |
+| Param                 | Type   | Description                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sort_by`             | string | `most-popular` (default), `trending`, `recent`                                                                                                                                                                                                                                                                                                                                      |
+| `target_energy`       | number | Calorie target (kcal, 100–2000) used to compute `portion_grams` per recipe. Overrides the stored `target_energy_kcal` for this request; omit to use the profile target.                                                                                                                                                                                                             |
+| `limit`               | int    | 1–50 (default 20)                                                                                                                                                                                                                                                                                                                                                                   |
+| `search`              | string | Free-text search                                                                                                                                                                                                                                                                                                                                                                    |
+| `tags`                | string | Comma-separated tags (e.g. `vegetarian,high-protein`)                                                                                                                                                                                                                                                                                                                               |
+| `include_ingredients` | string | Comma-separated ingredient identifiers to require. Accepts both string IDs (e.g. `salmon`) and numeric `short_id` values (e.g. `85`).                                                                                                                                                                                                                                               |
+| `exclude_ingredients` | string | Comma-separated ingredient identifiers to exclude. Accepts both string IDs (e.g. `pulled-pork`) and numeric `short_id` values (e.g. `125`).                                                                                                                                                                                                                                         |
+| `nutrition_filter`    | string | Filter by any nutrition property. Comma-separated `property:min:max` expressions. Supports all 35 properties (see All 35 Nutrition Properties). Empty min/max = unbounded. Examples: `protein:20:50` (protein 20–50g/100g), `sodium::0.3` (sodium ≤0.3g/100g), `availableCarb:0:15,protein:25:` (carbs 0–15 AND protein ≥25). Invalid property names return 400 with the full list. |
+| `timescale`           | int    | For `most-popular`: 1, 7, 30, or 365 days                                                                                                                                                                                                                                                                                                                                           |
+| `cursor`              | string | Pagination cursor from previous response                                                                                                                                                                                                                                                                                                                                            |
+| `lang`                | string | `en` or `fr`                                                                                                                                                                                                                                                                                                                                                                        |
 
 Get full recipe detail:
 
@@ -480,10 +513,25 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
     "title_fr": "Curry de pois chiches aux épinards",
     "title_en": "Curry de pois chiches aux épinards",
     "ingredients": [
-      { "id": "chickpeas", "short_id": 14, "title_en": "chickpeas", "proportion": 0.33587 },
-      { "id": "spinach", "short_id": 26, "title_en": "spinach", "proportion": 0.15 }
+      {
+        "id": "chickpeas",
+        "short_id": 14,
+        "title_en": "chickpeas",
+        "proportion": 0.33587
+      },
+      {
+        "id": "spinach",
+        "short_id": 26,
+        "title_en": "spinach",
+        "proportion": 0.15
+      }
     ],
-    "nutrition_per_100g": { "energy": 123.34, "protein": 5.02, "fiber": 4.32, "..." : "35 properties" },
+    "nutrition_per_100g": {
+      "energy": 123.34,
+      "protein": 5.02,
+      "fiber": 4.32,
+      "...": "35 properties"
+    },
     "image": "https://symphony.fr/cdn-cgi/imagedelivery/...",
     "version_node_id": "6489f0c2a1b3d4e5f6a7b8c9",
     "version_root_id": "63ce63c1a1b3d4e5f6a7b8c9",
@@ -503,11 +551,11 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 - `version_node_id` — the **exact version** (this specific node) of the recipe.
 - `parent_recipe_id` — the recipe's **direct lineage parent**, or `null` for an
   original with no ancestor. This is the same id `POST /recipes` accepts as
-  `parent_recipe_id`. (To fork *this* recipe, pass its own `id` as
+  `parent_recipe_id`. (To fork _this_ recipe, pass its own `id` as
   `parent_recipe_id` — see **Personalize** and **Ingredient substitution**;
   `parent_recipe_id` here is provenance, i.e. what this recipe was derived from.)
 
-**Show the user a recipe.** When the user wants to actually *see* a recipe (image, full breakdown) in their browser, give them the shareable page for its `id`:
+**Show the user a recipe.** When the user wants to actually _see_ a recipe (image, full breakdown) in their browser, give them the shareable page for its `id`:
 
 ```
 https://symphony.fr/recipe/6336dbba6ac970d8e808e862
@@ -537,7 +585,11 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "groups": ["non-vegan"],
         "image": "https://symphony.fr/cdn-cgi/imagedelivery/.../public",
         "in_stock": true,
-        "nutrition_per_100g": { "energy": 169, "protein": 24, "..." : "35 properties" }
+        "nutrition_per_100g": {
+          "energy": 169,
+          "protein": 24,
+          "...": "35 properties"
+        }
       }
     ],
     "next_actions": ["browse_recipes", "view_recipe"]
@@ -550,6 +602,7 @@ Query params: `family` (e.g. `fruit`, `fishes`, `spices`, `French-cheeses`, `Ita
 **Note:** Cheese ingredients are split across `French-cheeses` and `Italian-cheeses` families. To find all cheeses, query both.
 
 Each ingredient includes `allergens_en` and `allergens_fr` fields:
+
 - `null` — no allergen data available
 - A string (e.g. `"gluten"`, `"gluten, eggs"`) — the allergens **contained in** this ingredient
 - The ingredient's own ID — the ingredient **is** the allergen itself (e.g. `"salmon"` for fish allergy)
@@ -573,7 +626,12 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
     "language": "fr",
     "target_energy_kcal": 750,
     "agent_context": "Eats ~750 kcal/meal. Vegetarian, dislikes mushrooms. Started cycling to work May 2026.",
-    "next_actions": ["update_profile", "update_context", "view_upcoming_basket", "browse_recipes"]
+    "next_actions": [
+      "update_profile",
+      "update_context",
+      "view_upcoming_basket",
+      "browse_recipes"
+    ]
   }
 }
 ```
@@ -602,18 +660,17 @@ curl -s -X PATCH -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 
 **All updatable fields:**
 
-| Field | Type | Validation |
-|-------|------|------------|
-| `display_name` | string | Max 100 chars |
-| `language` | string | `en` or `fr` |
-| `target_energy_kcal` | float | 100–2000 (per-meal) |
+| Field                | Type   | Validation          |
+| -------------------- | ------ | ------------------- |
+| `display_name`       | string | Max 100 chars       |
+| `language`           | string | `en` or `fr`        |
+| `target_energy_kcal` | float  | 100–2000 (per-meal) |
 
 Any other field returns **400**. `target_energy_kcal` is the only nutritional setting — it
 is **per-meal**. Body measurements (age, height, weight, activity level) are **not** stored
 and do not compute a target; gather appetite/clues in conversation instead (see **Setting
 the per-meal calorie target**). To save private notes about the user, use `PUT /me/context`,
 not `PATCH /me`.
-
 
 ---
 
@@ -675,17 +732,23 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "title_en": "Canard effiloché et son kaléidoscope de légumes",
         "quantity_g": 650,
         "meal_count": 1,
-        "nutrition_per_100g": { "energy": 124.96, "..." : "35 properties" },
+        "nutrition_per_100g": { "energy": 124.96, "...": "35 properties" },
         "image": "https://symphony.fr/cdn-cgi/imagedelivery/..."
       }
     ],
     "count": 1,
     "totals": {
-      "meal_count": 1, "total_energy_kcal": 812,
-      "subtotal_eur": 13.9, "discount_eur": 0, "meals_total_eur": 13.9,
-      "shipping_eur": 10.0, "total_price_eur": 23.9,
-      "qualifies_for_free_shipping": false, "free_shipping_threshold_eur": 40,
-      "amount_to_free_shipping_eur": 26.1, "delivery_method": "doorstep"
+      "meal_count": 1,
+      "total_energy_kcal": 812,
+      "subtotal_eur": 13.9,
+      "discount_eur": 0,
+      "meals_total_eur": 13.9,
+      "shipping_eur": 10.0,
+      "total_price_eur": 23.9,
+      "qualifies_for_free_shipping": false,
+      "free_shipping_threshold_eur": 40,
+      "amount_to_free_shipping_eur": 26.1,
+      "delivery_method": "doorstep"
     },
     "next_actions": ["add_meal", "remove_meal", "place_order", "browse_recipes"]
   }
@@ -752,14 +815,15 @@ Body: JSON array of meal IDs to remove.
 Once the basket has the meals the user wants, you can place a real order: pick a delivery address, a delivery method + date, and (if anything is due on card) a saved payment method, then `POST /me/orders`.
 
 **Before checkout, confirm:**
+
 1. The basket has at least one meal (`GET /me/meals/upcoming-basket`).
-2. Delivery is available for the address (`GET /delivery/check`) — rule #1.
+2. Delivery is available for the address (`GET /delivery/check`, with the user's key) — rule #1.
 
 **Mandatory confirmation + price breakdown — always, even for saved values.** Placing an order is a **two-call** flow, and you must complete it **every time**, even when the address, method, date, and card are all already saved or defaulted:
 
 1. **Call `POST /me/orders` _without_ `confirmed`.** No order is placed. The response is `requires_confirmation: true` with the resolved `order_summary` and a full `pricing` breakdown (the exact numbers that will be charged).
 2. **Show the user everything** — all four details **and** the price breakdown — and get an explicit "yes":
-   - **Delivery address** (recipient + full street address)
+   - **Delivery address** (recipient + full street address), or the `pickup_location` and `building_name` for a method with `address_required: false`
    - **Delivery method** (e.g. `doorstep`)
    - **Preferred delivery date** (and time slot, if any)
    - **Payment method** (which saved card — brand + last4 — or "covered by credits / free")
@@ -769,22 +833,27 @@ Once the basket has the meals the user wants, you can place a real order: pick a
 The endpoint **never places an order without `confirmed: true`** — the first call always returns the summary to confirm. Do not set `confirmed: true` unless the user has just confirmed these specific values and the price.
 
 **Payment — important agent constraint.** An agent can only pay with a card the user has **already saved** (the charge is confirmed off-session, server-side). You **cannot** enter a new card, and cards that demand 3-D Secure authentication can't be completed by an agent. So:
+
 - If the order total is fully covered by **credits** or is **0 €**, no payment method is needed — the order finalizes immediately.
 - If any amount is due on card, pass a `payment_method_id` from `GET /me/payment-methods`.
-  - **No saved card?** You can't add one for them. Have the user save a reusable card at `manage_payment_methods_url` (`…/my-account/account/payment`) — a standalone save that needs **no** order — then place the order yourself via the two-call flow. **Do not** send them to `/checkout` to "add a card" for *this* order — at `/checkout` a card is saved only by *completing* an order, so it either saves nothing (they didn't finish) or the order's already placed (they did). *(A completed browser order **does** persist the card — the "save card" option is on by default — so once the user has placed one order themselves, their **next** order can be agent-placed with that saved card.)*
-  - **3-D Secure required?** You can't complete it — have the user finish *that order* in the browser at `https://symphony.fr/checkout`.
+  - **No saved card?** You can't add one for them. Have the user save a reusable card at `manage_payment_methods_url` (`…/my-account/account/payment`) — a standalone save that needs **no** order — then place the order yourself via the two-call flow. **Do not** send them to `/checkout` to "add a card" for _this_ order — at `/checkout` a card is saved only by _completing_ an order, so it either saves nothing (they didn't finish) or the order's already placed (they did). _(A completed browser order **does** persist the card — the "save card" option is on by default — so once the user has placed one order themselves, their **next** order can be agent-placed with that saved card.)_
+  - **3-D Secure required?** You can't complete it — have the user finish _that order_ in the browser at `https://symphony.fr/checkout`.
 
 **When you can't finish it — send the user to checkout.** Anything an agent can't complete (3-D Secure authentication, entering a new card, or any other blocked payment step) should end with the user finishing in the browser at `https://symphony.fr/checkout`. The `Payment failed: …` errors already include this URL — relay it as-is.
 
 **Handing the user a link.** Some things are faster (or only possible) in the browser. The responses carry ready-made URLs for these — surface them to the user when relevant instead of inventing paths:
-- `https://symphony.fr/checkout` — where the user completes the **whole order** themselves when the agent can't (appears in payment-failure errors). Not a way to *just* add a card — but completing an order here **does** save the card for their future (agent-placeable) orders.
+
+- `https://symphony.fr/checkout` — where the user completes the **whole order** themselves when the agent can't (appears in payment-failure errors). Not a way to _just_ add a card — but completing an order here **does** save the card for their future (agent-placeable) orders.
 - `manage_payment_methods_url` (on `GET /me/payment-methods` and in card-payment errors) — add or update a saved card. This is the **standalone way to save a reusable card (no order needed)** so you can then place the order.
 - `manage_addresses_url` (on `GET`/`POST /me/addresses`) — edit delivery addresses directly. **Always** offer this as an "or" whenever you ask the user for an address (see Step 1).
 - `basket_url` (on a placed order) — open the order's basket.
 
 #### Step 1 — Delivery address
 
+Skip this step when the chosen method has `address_required: false` (a pickup point): its place is fixed, so send neither `delivery_address_id` nor `delivery_address`.
+
 **Always offer the "or" option.** Any time you ask the user to enter a delivery address — to add a new one or change/manage an existing one — present **two** paths, not one:
+
 1. Tell it to you and you'll add it (`POST /me/addresses`), **or**
 2. Manage it themselves in the UI at `https://symphony.fr/my-account/account/address` (this is the `manage_addresses_url` returned by the address endpoints).
 
@@ -803,11 +872,17 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
     "addresses": [
       {
         "id": "64a1b2c3d4e5f6a7b8c9d0e1",
-        "first_name": "Sophie", "last_name": "Martin",
-        "street_address": "12 Rue de Rivoli", "address_line_2": "",
-        "city": "Paris", "state": "", "postal_code": "75004",
-        "country_code": "FR", "phone": "+33612345678",
-        "is_default_delivery": true, "is_default_billing": true
+        "first_name": "Sophie",
+        "last_name": "Martin",
+        "street_address": "12 Rue de Rivoli",
+        "address_line_2": "",
+        "city": "Paris",
+        "state": "",
+        "postal_code": "75004",
+        "country_code": "FR",
+        "phone": "+33612345678",
+        "is_default_delivery": true,
+        "is_default_billing": true
       }
     ],
     "count": 1,
@@ -836,7 +911,7 @@ Required: `first_name`, `last_name`, `street_address`, `city`, `postal_code`. Op
 
 #### Step 2 — Delivery method + date
 
-The method comes from `GET /delivery/check` (`delivery_methods[].method`, e.g. `doorstep`, `courier`, `chronofresh`) and the date from `GET /delivery/dates` (a `YYYY-MM-DD` on an allowed day for that method).
+The method comes from `GET /delivery/check` called with the user's key (`delivery_methods[].method`, e.g. `doorstep`, `courier`, `chronofresh`) and the date from `GET /delivery/dates`, also with the user's key (a `YYYY-MM-DD` on an allowed day for that method). A method with `address_required: false` takes no address: see Step 1.
 
 #### Step 3 — Saved payment method (only if card is due)
 
@@ -849,7 +924,13 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 {
   "data": {
     "payment_methods": [
-      { "id": "pm_1AbC...", "brand": "visa", "last4": "4242", "exp_month": 12, "exp_year": 2027 }
+      {
+        "id": "pm_1AbC...",
+        "brand": "visa",
+        "last4": "4242",
+        "exp_month": 12,
+        "exp_year": 2027
+      }
     ],
     "count": 1,
     "manage_payment_methods_url": "https://symphony.fr/my-account/account/payment",
@@ -880,7 +961,11 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
     "requires_confirmation": true,
     "message": "Show the user this order summary AND the full pricing breakdown, get their explicit confirmation, then call POST /me/orders again with the same fields plus \"confirmed\": true. Do this every time, even when all values were already saved.",
     "order_summary": {
-      "delivery_address": { "id": "64a1b2c3d4e5f6a7b8c9d0e1", "city": "Paris", "...": "..." },
+      "delivery_address": {
+        "id": "64a1b2c3d4e5f6a7b8c9d0e1",
+        "city": "Paris",
+        "...": "..."
+      },
       "delivery_method": "doorstep",
       "delivery_date": "2026-06-29",
       "preferred_time": null,
@@ -936,7 +1021,11 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
       "currency": "EUR",
       "delivery_method": "doorstep",
       "estimated_delivery_at": "2026-06-29T06:00:00.000Z",
-      "delivery_address": { "id": "64a1b2c3d4e5f6a7b8c9d0e1", "city": "Paris", "...": "..." },
+      "delivery_address": {
+        "id": "64a1b2c3d4e5f6a7b8c9d0e1",
+        "city": "Paris",
+        "...": "..."
+      },
       "basket_url": "https://symphony.fr/basket/690f25d559ecd62698981aaa"
     },
     "payment": { "method": "card", "charged_eur": 45.9 },
@@ -947,17 +1036,17 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 
 **Body reference:**
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `confirmed` | to place | Omit (or `false`) to get the `requires_confirmation` summary + price breakdown without placing. Set `true` only after the user confirms those exact values and the price. |
-| `delivery_address_id` | one of address fields | Id from `GET /me/addresses`. Omit it and `delivery_address` to use the user's default. |
-| `delivery_address` | one of address fields | Inline address (same fields as `POST /me/addresses`) to create + use in one call. **Note:** does *not* set a billing default, so on a paid order it 400s "No billing address" unless the user already has a saved billing address. For a user with none, save the address first via `POST /me/addresses` (sets default delivery **and** billing), then order by `delivery_address_id` — or also pass `billing_address_id`. |
-| `delivery_method` | yes | Method key from `GET /delivery/check` (e.g. `doorstep`). Must be available for the address's postal code. |
-| `delivery_date` | yes | `YYYY-MM-DD` from `GET /delivery/dates`, on an allowed day for the method. |
-| `payment_method_id` | only if card due | Saved card id from `GET /me/payment-methods`. Not needed for credit/0 € orders. |
-| `billing_address_id` | no | Defaults to the user's **saved** billing address (set automatically when they add their first address via `POST /me/addresses`). An inline `delivery_address` does not populate it. |
-| `preferred_time` | no | Time slot, for methods that offer one (e.g. `courier`: `07:00-09:00`). |
-| `building_name`, `delivery_instructions` | no | Optional delivery details. |
+| Field                                    | Required              | Description                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `confirmed`                              | to place              | Omit (or `false`) to get the `requires_confirmation` summary + price breakdown without placing. Set `true` only after the user confirms those exact values and the price.                                                                                                                                                                                                                                                  |
+| `delivery_address_id`                    | one of address fields | Id from `GET /me/addresses`. Omit it and `delivery_address` to use the user's default. Omit both for a method with `address_required: false`.                                                                                                                                                                                                                                                                                                                                     |
+| `delivery_address`                       | one of address fields | Inline address (same fields as `POST /me/addresses`) to create + use in one call. **Note:** does _not_ set a billing default, so on a paid order it 400s "No billing address" unless the user already has a saved billing address. For a user with none, save the address first via `POST /me/addresses` (sets default delivery **and** billing), then order by `delivery_address_id` — or also pass `billing_address_id`. |
+| `delivery_method`                        | yes                   | Method key from `GET /delivery/check` (e.g. `doorstep`). Must be available for the address's postal code (or, with `address_required: false`, for the user's account).                                                                                                                                                                                                                                                                                                                  |
+| `delivery_date`                          | yes                   | `YYYY-MM-DD` from `GET /delivery/dates`, on an allowed day for the method.                                                                                                                                                                                                                                                                                                                                                 |
+| `payment_method_id`                      | only if card due      | Saved card id from `GET /me/payment-methods`. Not needed for credit/0 € orders.                                                                                                                                                                                                                                                                                                                                            |
+| `billing_address_id`                     | no                    | Defaults to the user's **saved** billing address (set automatically when they add their first address via `POST /me/addresses`). An inline `delivery_address` does not populate it.                                                                                                                                                                                                                                        |
+| `preferred_time`                         | no                    | Time slot, for methods that offer one (e.g. `courier`: `07:00-09:00`).                                                                                                                                                                                                                                                                                                                                                     |
+| `building_name`, `delivery_instructions` | no                    | Optional delivery details. For a method whose `pickup_location.building_options` is not empty, `building_name` must be one of their `value`s (default `default_building`); methods without buildings ignore it.                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 On a card decline or 3-D Secure requirement, the order is rolled back (the meals return to the basket) and the call returns a `Payment failed: …` error that already includes `https://symphony.fr/checkout` — relay it to the user so they can finish in the browser (the error also links `manage_payment_methods_url` for a declined card). On success, the response includes `order.basket_url` — share it so the user can review the placed order.
 
@@ -985,13 +1074,20 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "title_fr": "Aubergines façon moussaka",
         "title_en": "Aubergines façon moussaka",
         "quantity_g": 505,
-        "nutrition_per_100g": { "energy": 162.53, "protein": 6.63, "..." : "35 properties" },
+        "nutrition_per_100g": {
+          "energy": 162.53,
+          "protein": 6.63,
+          "...": "35 properties"
+        },
         "delivered_at": "2025-10-06T07:00:05.856Z",
         "eaten_at": "2025-10-11T11:58:14.000Z",
         "image": "https://symphony.fr/..."
       }
     ],
-    "pagination": { "has_next_page": true, "cursor": "68df8e38b3a925b92b6520b3" },
+    "pagination": {
+      "has_next_page": true,
+      "cursor": "68df8e38b3a925b92b6520b3"
+    },
     "next_actions": ["view_nutrition_summary", "browse_recipes"]
   }
 }
@@ -1022,8 +1118,10 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "title_en": "Canard effiloché et son kaléidoscope de légumes",
         "quantity_g": 540,
         "meal_count": 1,
-        "nutrition_per_100g": { "energy": 124.96, "..." : "35 properties" },
+        "nutrition_per_100g": { "energy": 124.96, "...": "35 properties" },
         "delivered_at": "2026-05-29T07:00:04.000Z",
+        "location": "home",
+        "pickup_location_name": null,
         "image": "https://symphony.fr/cdn-cgi/imagedelivery/..."
       }
     ],
@@ -1034,6 +1132,8 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 ```
 
 Returned in full (the freezer is a small bounded inventory) — no pagination. `count` is the number of meals currently in the freezer.
+
+Each meal carries a `location`: `home` (the user's own freezer) or `pickup` (it waits at a pickup point, named in `pickup_location_name`). When listing what's left, tell the user which meals are still waiting at the pickup point.
 
 ---
 
@@ -1052,10 +1152,13 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
     "id": "690f25d559ecd62698981904",
     "eaten_at": "2026-08-08T19:30:00.000Z",
     "was_already_eaten": false,
+    "undo_until": "2026-08-22T19:30:00.000Z",
     "next_actions": ["view_meal_history", "view_freezer"]
   }
 }
 ```
+
+`undo_until` is when the undo window below closes.
 
 **Backdating — "I ate it on Tuesday, I just forgot to log it".** Send `eaten_at`. Without it the meal is recorded as eaten *now*, which is rarely what the user means when they're catching up on a backlog.
 
@@ -1087,8 +1190,8 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 {
   "data": {
     "results": [
-      { "id": "690f25d559ecd62698981904", "status": "eaten", "eaten_at": "2026-08-01T19:30:00.000Z", "was_already_eaten": false },
-      { "id": "690f25d559ecd62698981905", "status": "eaten", "eaten_at": "2026-08-02T12:30:00.000Z", "was_already_eaten": true },
+      { "id": "690f25d559ecd62698981904", "status": "eaten", "eaten_at": "2026-08-01T19:30:00.000Z", "was_already_eaten": false, "undo_until": "2026-08-15T19:30:00.000Z" },
+      { "id": "690f25d559ecd62698981905", "status": "eaten", "eaten_at": "2026-08-02T12:30:00.000Z", "was_already_eaten": true, "undo_until": "2026-08-16T12:30:00.000Z" },
       { "id": "690f25d559ecd62698981906", "status": "not_found", "error": "No meal found with ID 690f25d559ecd62698981906 for this user" }
     ],
     "summary": { "requested": 3, "eaten": 2, "already_eaten": 1, "not_found": 1, "discarded": 0, "not_delivered": 0, "failed": 0 },
@@ -1104,6 +1207,28 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 > **Don't use `POST /recipes/{mealId}/rate` to mark a meal as eaten.** Rating does mark it eaten as a side effect, but it also writes into the recipe's **public** average rating that every other customer sees. Marking a backlog of meals eaten that way means inventing ratings the user never gave. Rate only when the user actually wants to rate.
 
 **Caveat when backdating far into the past:** rating a meal is only allowed within 2 weeks of when it was eaten. If you backdate a meal more than 2 weeks and the user then wants to rate it, `POST /recipes/{mealId}/rate` returns 400. Rate first, then correct the date.
+
+**Undo — "I didn't eat it", "that was a mistake".** `DELETE /me/meals/{mealId}/eat` puts the meal back in the freezer. Use it as soon as the user says a meal was marked eaten by mistake (by you or by them), and tell them it's back in their freezer.
+
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $SYMPHONY_API_KEY" \
+  "https://symphony.fr/api/v3/me/meals/690f25d559ecd62698981904/eat?reason=User+said+they+did+not+eat+this+meal"
+```
+
+```json
+{
+  "data": {
+    "id": "690f25d559ecd62698981904",
+    "eaten_at": null,
+    "rating_removed": false,
+    "next_actions": ["view_freezer", "view_meal_history"]
+  }
+}
+```
+
+- **The undo window is limited**, counted from the meal's `eaten_at`: **5 minutes** for a meal taken from a smart freezer, **2 weeks** for any other meal. Every eat response tells you when it closes (`undo_until`); a backdated `eaten_at` can put it already in the past. Past it the call returns 400 with the reason, e.g. `Buying item can no longer be undone: its undo window closed at 2026-08-15T19:30:00.000Z (2 weeks after being marked as eaten)`. Tell the user plainly that it can no longer be undone and why; don't try to work around it.
+- **Undo also deletes the meal's rating.** Rating a meal marks it eaten, so undoing the eaten mark removes its star rating (and its weight in the recipe's public average) along with the eaten count; a written comment stays. `rating_removed` says whether there was a rating. Rate again only if the user actually ate it later.
+- Also refused (400): a meal that isn't marked as eaten, and a meal shared in a community post. One meal per call: there is no bulk undo.
 
 ---
 
@@ -1124,7 +1249,11 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "date": "2025-10-03",
         "meal_count": 1,
         "total_quantity_g": 507,
-        "nutrition_total": { "energy": 820, "protein": 27.56, "..." : "35 properties" }
+        "nutrition_total": {
+          "energy": 820,
+          "protein": 27.56,
+          "...": "35 properties"
+        }
       }
     ],
     "next_actions": ["view_meal_history", "browse_recipes"]
@@ -1153,20 +1282,23 @@ curl -s -H "Authorization: Bearer $SYMPHONY_API_KEY" \
         "delivered_at": "2025-10-06T07:00:04.532Z",
         "estimated_delivery_at": "2025-10-06T06:00:00.000Z",
         "delivery_method": "doorstep",
-        "total_price_eur": 45.90,
+        "total_price_eur": 45.9,
         "meals": [
           {
             "id": "68df8e38b3a925b92b6520ac",
             "title_fr": "Penne Bœuf Effiloché Citron Vert",
             "quantity_g": 581,
             "meal_count": 1,
-            "nutrition_per_100g": { "energy": 141.05, "..." : "35 properties" },
+            "nutrition_per_100g": { "energy": 141.05, "...": "35 properties" },
             "image": "https://symphony.fr/..."
           }
         ]
       }
     ],
-    "pagination": { "has_next_page": true, "cursor": "68df8e38b3a925b92b652090" },
+    "pagination": {
+      "has_next_page": true,
+      "cursor": "68df8e38b3a925b92b652090"
+    },
     "next_actions": ["browse_recipes", "view_meal_history"]
   }
 }
@@ -1276,6 +1408,7 @@ curl -s -X DELETE -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 
 Modifications follow a strict order: **macros first → flavor/texture → fine spices → sodium last.** Each phase can shift sodium, so salt is always the final adjustment.
 
+<!-- module: symphony_skill.py -->
 ```python
 # ═══ REDISTRIBUTE UTILITY ═══════════════════════════════════════════
 # Proportions sum to 1.0 (100%). Every increase must be funded by a
@@ -1299,7 +1432,9 @@ def redistribute(qty, target_id, delta, donor_ids):
 def auto_donors(qty, min_prop=0.03):
     """Select bulk ingredients (≥3% proportion) as donors."""
     return [i for i in range(len(qty)) if qty[i] >= min_prop]
+```
 
+```python
 # ═══ FULL RECIPE MODIFICATION EXAMPLE ═══════════════════════════════
 # Scenario: convert Balinese Pulled Beef Curry to vegan
 # User wants ≥40g protein, 800 kcal target, normal salt (0.20–0.33%)
@@ -1441,6 +1576,7 @@ result = POST("/recipes", {
 ```
 
 **The phases in order and why:**
+
 1. **Macros** (protein, fat, substitutions) — biggest mass changes, dominate nutrition
 2. **Flavor/texture** (chili paste, coconut cream amounts) — medium mass, barely shift macros
 3. **Fine spices** (ground chili, cumin) — tiny mass, zero macro impact, but big taste impact
@@ -1510,7 +1646,10 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
     "message": "Could you add tempeh to the catalog? Great vegan protein source.",
     "status": "pending",
     "response_for": "agent",
-    "callback": { "method": "webhook", "address": "https://my-agent.example.com/symphony-callback" },
+    "callback": {
+      "method": "webhook",
+      "address": "https://my-agent.example.com/symphony-callback"
+    },
     "created_at": "2026-05-30T16:06:46.333Z",
     "next_actions": ["check_feedback_status"]
   }
@@ -1523,11 +1662,11 @@ curl -s -X POST -H "Authorization: Bearer $SYMPHONY_API_KEY" \
 
 The `callback` object tells Symphony how to deliver their response:
 
-| `callback.method` | Meaning | `response_for` |
-|-------------------|---------|----------------|
-| `webhook` | Symphony POSTs the response to `callback.address` | `agent` — response goes directly to the agent |
-| `email` | Symphony emails the response to `callback.address` | `agent` — response goes to the agent's email |
-| `none` or omitted | No direct agent contact possible | `user` — Symphony contacts the user and asks them to forward to their agent |
+| `callback.method` | Meaning                                            | `response_for`                                                              |
+| ----------------- | -------------------------------------------------- | --------------------------------------------------------------------------- |
+| `webhook`         | Symphony POSTs the response to `callback.address`  | `agent` — response goes directly to the agent                               |
+| `email`           | Symphony emails the response to `callback.address` | `agent` — response goes to the agent's email                                |
+| `none` or omitted | No direct agent contact possible                   | `user` — Symphony contacts the user and asks them to forward to their agent |
 
 If you can provide a webhook or email, do so — it enables direct communication. If your platform doesn't support callbacks, omit the `callback` field; Symphony will reach the user instead.
 
@@ -1661,61 +1800,62 @@ Synthesis pages are public (no auth required) and updated periodically. Check `u
 
 ## Endpoint Reference
 
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/delivery/check` | GET | No | Check if postal code is deliverable |
-| `/delivery/dates` | GET | No | Available delivery dates by postal code |
-| `/ingredients` | GET | Yes | List ingredients (filter: `family`, `include_out_of_stock`) |
-| `/recipes/discover` | GET | Yes | Browse recipes with filters and pagination |
-| `/recipes/{id}` | GET | Yes | Recipe detail with ingredients and nutrition |
-| `/recipes` | POST | Yes | Create recipe from ingredient proportions |
-| `/recipes/{mealId}/rate` | POST | Yes | Rate a meal (1–5) with optional comment |
-| `/me` | GET | Yes | User profile (incl. per-meal `target_energy_kcal` and `agent_context`) |
-| `/me` | PATCH | Yes | Update profile fields (`display_name`, `language`, `target_energy_kcal`) |
-| `/me/context` | GET | Yes | Read your private agent note about this user |
-| `/me/context` | PUT | Yes | Replace your private agent note about this user |
-| `/me/baskets` | GET | Yes | Past baskets with meals (paginated) |
-| `/me/meals/history` | GET | Yes | Meal history (paginated) |
-| `/me/meals/freezer` | GET | Yes | Freezer — meals received but not yet eaten |
-| `/me/meals/{mealId}/eat` | POST | Yes | Mark a meal as eaten; optional `eaten_at` to backdate |
-| `/me/meals/eat` | POST | Yes | Mark up to 100 meals as eaten in one call (one write) |
-| `/me/meals/upcoming-basket` | GET | Yes | Current upcoming basket |
-| `/me/meals/upcoming-basket` | POST | Yes | Add meals to basket |
-| `/me/meals/upcoming-basket` | PATCH | Yes | Update meal quantity/count |
-| `/me/meals/upcoming-basket` | DELETE | Yes | Remove meals from basket |
-| `/me/addresses` | GET | Yes | List saved delivery/billing addresses |
-| `/me/addresses` | POST | Yes | Add an address (sets default delivery) |
-| `/me/payment-methods` | GET | Yes | List saved cards for checkout |
-| `/me/orders` | POST | Yes | Place an order (checkout) from the basket |
-| `/me/playlists` | GET | Yes | List playlists |
-| `/me/playlists` | POST | Yes | Create playlist |
-| `/me/playlists/{id}` | GET | Yes | Playlist detail with items |
-| `/me/playlists/{id}/recipes` | POST | Yes | Add recipe to playlist |
-| `/me/playlists/{id}/recipes/{itemId}` | DELETE | Yes | Remove recipe from playlist |
-| `/me/credits` | GET | Yes | Credit balance + transaction history |
-| `/me/nutrition/summary` | GET | Yes | Daily nutrition breakdown over date range |
-| `/feedback` | GET | Yes | List feedback / check response by `?feedbackId=ID` |
-| `/feedback` | POST | Yes | Submit feedback, bug report, ingredient request, or question |
-| `/feedback/{id}` | PATCH | Yes | Amend a pending feedback submission (locked once answered) |
-| `/feedback/{id}` | DELETE | Yes | Withdraw a feedback submission |
-| `/knowledge` | GET | Yes | List your own knowledge posts |
-| `/knowledge` | POST | Yes | Share a learning with the community |
-| `/knowledge/{id}` | DELETE | Yes | Remove a knowledge post |
-| `/knowledge/synthesis` | GET | No | List available community wisdom pages |
-| `/knowledge/synthesis/{slug}` | GET | No | Read a community wisdom page |
+| Endpoint                              | Method | Auth | Description                                                              |
+| ------------------------------------- | ------ | ---- | ------------------------------------------------------------------------ |
+| `/delivery/check`                     | GET    | No   | Check if postal code is deliverable (send the key: methods vary per account) |
+| `/delivery/dates`                     | GET    | No   | Available delivery dates by postal code (send the key)                   |
+| `/ingredients`                        | GET    | Yes  | List ingredients (filter: `family`, `include_out_of_stock`)              |
+| `/recipes/discover`                   | GET    | Yes  | Browse recipes with filters and pagination                               |
+| `/recipes/{id}`                       | GET    | Yes  | Recipe detail with ingredients and nutrition                             |
+| `/recipes`                            | POST   | Yes  | Create recipe from ingredient proportions                                |
+| `/recipes/{mealId}/rate`              | POST   | Yes  | Rate a meal (1–5) with optional comment                                  |
+| `/me`                                 | GET    | Yes  | User profile (incl. per-meal `target_energy_kcal` and `agent_context`)   |
+| `/me`                                 | PATCH  | Yes  | Update profile fields (`display_name`, `language`, `target_energy_kcal`) |
+| `/me/context`                         | GET    | Yes  | Read your private agent note about this user                             |
+| `/me/context`                         | PUT    | Yes  | Replace your private agent note about this user                          |
+| `/me/baskets`                         | GET    | Yes  | Past baskets with meals (paginated)                                      |
+| `/me/meals/history`                   | GET    | Yes  | Meal history (paginated)                                                 |
+| `/me/meals/freezer`                   | GET    | Yes  | Freezer — meals received but not yet eaten                               |
+| `/me/meals/{mealId}/eat`              | POST   | Yes  | Mark a meal as eaten; optional `eaten_at` to backdate                    |
+| `/me/meals/eat`                      | POST   | Yes  | Mark up to 100 meals as eaten in one call (one write)                    |
+| `/me/meals/{mealId}/eat`              | DELETE | Yes  | Undo "eaten": back to the freezer, rating removed (5 min / 2 weeks)      |
+| `/me/meals/upcoming-basket`           | GET    | Yes  | Current upcoming basket                                                  |
+| `/me/meals/upcoming-basket`           | POST   | Yes  | Add meals to basket                                                      |
+| `/me/meals/upcoming-basket`           | PATCH  | Yes  | Update meal quantity/count                                               |
+| `/me/meals/upcoming-basket`           | DELETE | Yes  | Remove meals from basket                                                 |
+| `/me/addresses`                       | GET    | Yes  | List saved delivery/billing addresses                                    |
+| `/me/addresses`                       | POST   | Yes  | Add an address (sets default delivery)                                   |
+| `/me/payment-methods`                 | GET    | Yes  | List saved cards for checkout                                            |
+| `/me/orders`                          | POST   | Yes  | Place an order (checkout) from the basket                                |
+| `/me/playlists`                       | GET    | Yes  | List playlists                                                           |
+| `/me/playlists`                       | POST   | Yes  | Create playlist                                                          |
+| `/me/playlists/{id}`                  | GET    | Yes  | Playlist detail with items                                               |
+| `/me/playlists/{id}/recipes`          | POST   | Yes  | Add recipe to playlist                                                   |
+| `/me/playlists/{id}/recipes/{itemId}` | DELETE | Yes  | Remove recipe from playlist                                              |
+| `/me/credits`                         | GET    | Yes  | Credit balance + transaction history                                     |
+| `/me/nutrition/summary`               | GET    | Yes  | Daily nutrition breakdown over date range                                |
+| `/feedback`                           | GET    | Yes  | List feedback / check response by `?feedbackId=ID`                       |
+| `/feedback`                           | POST   | Yes  | Submit feedback, bug report, ingredient request, or question             |
+| `/feedback/{id}`                      | PATCH  | Yes  | Amend a pending feedback submission (locked once answered)               |
+| `/feedback/{id}`                      | DELETE | Yes  | Withdraw a feedback submission                                           |
+| `/knowledge`                          | GET    | Yes  | List your own knowledge posts                                            |
+| `/knowledge`                          | POST   | Yes  | Share a learning with the community                                      |
+| `/knowledge/{id}`                     | DELETE | Yes  | Remove a knowledge post                                                  |
+| `/knowledge/synthesis`                | GET    | No   | List available community wisdom pages                                    |
+| `/knowledge/synthesis/{slug}`         | GET    | No   | Read a community wisdom page                                             |
 
 ## Error Handling
 
 Codes are the `error_code` in the response body (the HTTP status is usually 200, see **Response Format**).
 
-| `error_code` | Meaning | What to do |
-|--------------|---------|------------|
-| 400 | Bad request / validation | Read `message` for specifics |
-| 401 | Unauthorized | Check API key |
-| 403 | Forbidden (RBAC / not owner) | User lacks permission |
-| 404 | Not found | Check the ID |
-| 429 | Rate limited | Wait `Retry-After` seconds, then resend. See [Rate limits](#rate-limits) |
-| 500 | Server error | Retry or report |
+| `error_code` | Meaning                      | What to do                   |
+| ------------ | ---------------------------- | ---------------------------- |
+| 400          | Bad request / validation     | Read `message` for specifics |
+| 401          | Unauthorized                 | Check API key                |
+| 403          | Forbidden (RBAC / not owner) | User lacks permission        |
+| 404          | Not found                    | Check the ID                 |
+| 429          | Rate limited                 | Wait `Retry-After` seconds, then resend. See [Rate limits](#rate-limits) |
+| 500          | Server error                 | Retry or report              |
 
 ### Rate limits
 
